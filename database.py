@@ -1,132 +1,131 @@
-import os
 import mysql.connector
-import sqlite3
+from mysql.connector import Error
+import os
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# Conexão unificada: SQLite ou MySQL
-def init_connection():
-    db_type = os.getenv("DB_TYPE", "sqlite")
+# Função para obter ligação à base de dados
+def get_connection():
+    return mysql.connector.connect(
+        host=os.getenv("DB_HOST"),
+        user=os.getenv("DB_USER"),
+        password=os.getenv("DB_PASSWORD"),
+        database=os.getenv("DB_NAME")
+    )
 
-    if db_type == "mysql":
-        return mysql.connector.connect(
-            host=os.getenv("DB_HOST"),
-            user=os.getenv("DB_USER"),
-            password=os.getenv("DB_PASSWORD"),
-            database=os.getenv("DB_NAME"),
-            port=int(os.getenv("DB_PORT", 3306))
-        )
-    else:
-        return sqlite3.connect(os.getenv("DATABASE_NAME", "database.db"), check_same_thread=False)
+# Criar estrutura das tabelas
+def criar_tabelas():
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
 
-conn = init_connection()
-cursor = conn.cursor()
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS roles (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(50) UNIQUE NOT NULL
+        );
+        """)
 
-# ======== CRIAÇÃO DAS TABELAS (MySQL compatível) ========
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS allowed_emails (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            email VARCHAR(255) UNIQUE NOT NULL,
+            role_id INT NOT NULL,
+            FOREIGN KEY (role_id) REFERENCES roles(id)
+        );
+        """)
 
-# Roles
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS roles (
-    id INTEGER PRIMARY KEY AUTO_INCREMENT,
-    name VARCHAR(50) UNIQUE NOT NULL
-)
-""")
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            username VARCHAR(100) UNIQUE NOT NULL,
+            email VARCHAR(255) UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            role_id INT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (role_id) REFERENCES roles(id)
+        );
+        """)
 
-cursor.execute("SELECT COUNT(*) FROM roles")
-if cursor.fetchone()[0] == 0:
-    cursor.executemany("INSERT INTO roles (name) VALUES (%s)", [
-        ("user",),
-        ("account",),
-        ("admin",)
-    ])
-    conn.commit()
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS clientes (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            nome VARCHAR(255) NOT NULL,
+            perfil TEXT,
+            tier INT CHECK(tier BETWEEN 1 AND 4) DEFAULT 4,
+            keywords TEXT,
+            logo LONGBLOB,
+            email VARCHAR(255)
+        );
+        """)
 
-# Allowed emails
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS allowed_emails (
-    id INTEGER PRIMARY KEY AUTO_INCREMENT,
-    email VARCHAR(255) UNIQUE NOT NULL,
-    role_id INTEGER NOT NULL,
-    FOREIGN KEY (role_id) REFERENCES roles(id)
-)
-""")
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS media (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            nome VARCHAR(255),
+            url TEXT UNIQUE,
+            cliente_id INT NOT NULL,
+            tipologia VARCHAR(100),
+            segmento VARCHAR(100),
+            tier INT CHECK(tier BETWEEN 1 AND 4) DEFAULT 4,
+            FOREIGN KEY (cliente_id) REFERENCES clientes(id)
+        );
+        """)
 
-# Users
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTO_INCREMENT,
-    username VARCHAR(100) UNIQUE NOT NULL,
-    email VARCHAR(255) UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL,
-    role_id INTEGER NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (role_id) REFERENCES roles(id)
-)
-""")
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS results (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            cliente_id INT NOT NULL,
+            media_id INT NOT NULL,
+            keyword VARCHAR(255),
+            FOREIGN KEY (cliente_id) REFERENCES clientes(id),
+            FOREIGN KEY (media_id) REFERENCES media(id)
+        );
+        """)
 
-# Clientes
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS clientes (
-    id INTEGER PRIMARY KEY AUTO_INCREMENT,
-    nome VARCHAR(255) NOT NULL,
-    perfil TEXT,
-    tier INTEGER DEFAULT 4,
-    keywords TEXT,
-    logo LONGBLOB,
-    email VARCHAR(255)
-)
-""")
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS logs (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            timestamp TEXT,
+            user_email TEXT,
+            action TEXT,
+            target TEXT
+        );
+        """)
 
-# Media
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS media (
-    id INTEGER PRIMARY KEY AUTO_INCREMENT,
-    nome VARCHAR(255),
-    url VARCHAR(500) UNIQUE,
-    cliente_id INTEGER NOT NULL,
-    tipologia VARCHAR(100),
-    segmento VARCHAR(100),
-    tier INTEGER DEFAULT 4,
-    FOREIGN KEY (cliente_id) REFERENCES clientes(id)
-)
-""")
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS noticias_sugeridas (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            titulo TEXT,
+            url TEXT UNIQUE,
+            data TEXT,
+            keyword TEXT,
+            cliente_id INT,
+            site TEXT
+        );
+        """)
 
-# Results
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS results (
-    id INTEGER PRIMARY KEY AUTO_INCREMENT,
-    cliente_id INTEGER NOT NULL,
-    media_id INTEGER NOT NULL,
-    keyword VARCHAR(255),
-    FOREIGN KEY (cliente_id) REFERENCES clientes(id),
-    FOREIGN KEY (media_id) REFERENCES media(id)
-)
-""")
+        conn.commit()
+        print("✅ Tabelas criadas/verificadas com sucesso.")
 
-# Logs
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS logs (
-    id INTEGER PRIMARY KEY AUTO_INCREMENT,
-    timestamp TEXT,
-    user_email TEXT,
-    action TEXT,
-    target TEXT
-)
-""")
+        # Inserir roles iniciais se necessário
+        cursor.execute("SELECT COUNT(*) FROM roles")
+        if cursor.fetchone()[0] == 0:
+            cursor.executemany("INSERT INTO roles (name) VALUES (%s)", [
+                ("user",),
+                ("account",),
+                ("admin",)
+            ])
+            conn.commit()
+            print("✅ Roles iniciais inseridos.")
 
-# Noticias sugeridas
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS noticias_sugeridas (
-    id INTEGER PRIMARY KEY AUTO_INCREMENT,
-    titulo TEXT,
-    url TEXT UNIQUE,
-    data TEXT,
-    keyword TEXT,
-    cliente_id INTEGER,
-    site TEXT
-)
-""")
+    except Error as e:
+        print(f"❌ Erro ao criar tabelas: {e}")
+    finally:
+        if conn.is_connected():
+            cursor.close()
+            conn.close()
 
-conn.commit()
-print("✅ Base de dados criada com sucesso.")
+# Executar criação ao importar
+criar_tabelas()

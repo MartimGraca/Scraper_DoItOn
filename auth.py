@@ -2,6 +2,10 @@ import sqlite3
 import bcrypt
 from datetime import datetime
 import os
+from database import get_connection
+
+conn = get_connection()
+cursor = conn.cursor()
 
 from dotenv import load_dotenv
 
@@ -9,9 +13,6 @@ load_dotenv()
 ADMIN_EMAIL = os.getenv("ADMIN_EMAIL")
 
 
-# Conexão com a base de dados
-conn = sqlite3.connect("database.db", check_same_thread=False)
-cursor = conn.cursor()
 
 # ---------------------------
 # UTILITÁRIOS DE PASSWORD

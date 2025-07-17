@@ -1,12 +1,10 @@
-import sqlite3
 from datetime import datetime
 from scraper_google import executar_scraper_google
 import time
-
-DB_PATH = "database.db"
+from database import get_connection
 
 def get_clientes_keywords():
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT id, keywords FROM clientes WHERE keywords IS NOT NULL")
     rows = cursor.fetchall()
@@ -14,12 +12,12 @@ def get_clientes_keywords():
     return rows
 
 def guardar_noticia(noticia, cliente_id, keyword):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_connection()
     cursor = conn.cursor()
     try:
         cursor.execute("""
-            INSERT OR IGNORE INTO noticias_sugeridas (titulo, url, data, keyword, cliente_id, site)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT IGNORE INTO noticias_sugeridas (titulo, url, data, keyword, cliente_id, site)
+            VALUES (%s, %s, %s, %s, %s, %s)
         """, (noticia["titulo"], noticia["link"], noticia["data"], keyword, cliente_id, noticia["site"]))
         conn.commit()
     except Exception as e:

@@ -90,5 +90,4 @@ websocket-client
 websockets
 wsproto
 yarl
-mysql-connector-python
 

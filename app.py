@@ -33,11 +33,11 @@ if sys.platform.startswith('win'):
 
 
 # ----------- Configuração da BD -----------
-def init_connection():
-    return sqlite3.connect("database.db", check_same_thread=False)
+from database import get_connection
 
-conn = init_connection()
+conn = get_connection()
 cursor = conn.cursor()
+
 
 
 # ----------- Utilitários -----------
