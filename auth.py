@@ -41,8 +41,8 @@ def register_user(username: str, email: str, password: str):
     if not username or not email or not password:
         raise ValueError("Todos os campos são obrigatórios.")
 
-    if email.strip().lower() == "ADMIN_EMAIL":
-        role_id = 3
+    if email.strip().lower() == ADMIN_EMAIL.strip().lower():
+        role_name = "admin"
     else:
         role_name = "user"
 

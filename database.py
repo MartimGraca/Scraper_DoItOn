@@ -123,9 +123,15 @@ def criar_tabelas():
     except Error as e:
         print(f"❌ Erro ao criar tabelas: {e}")
     finally:
-        if conn.is_connected():
+        if cursor is not None:
             cursor.close()
-            conn.close()
+        if conn is not None:
+            # Fecha a conexão corretamente para SQLite ou MySQL
+            if hasattr(conn, "is_connected"):
+                if conn.is_connected():
+                    conn.close()
+            else:
+                conn.close()
 
 # Executar criação ao importar
 criar_tabelas()

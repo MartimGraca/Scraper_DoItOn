@@ -9,6 +9,7 @@ import hashlib
 from datetime import datetime
 import nest_asyncio
 from dotenv import load_dotenv
+import bcrypt
 
 from scraper import executar_scraper
 from scraper import get_site_name
@@ -928,4 +929,10 @@ if menu == "Resultados Automáticos":
                     st.rerun()
 
     conn.close()
+
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+
+def check_password(password: str, hashed: str) -> bool:
+    return bcrypt.checkpw(password.encode(), hashed.encode())
 
