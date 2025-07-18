@@ -24,7 +24,7 @@ def hash_password(password: str) -> str:
 def check_password(password: str, hashed: str) -> bool:
     return bcrypt.checkpw(password.encode(), hashed.encode())
 
-# ---------------------------
+
 # FUNÇÕES DE UTILIZADORES
 # ---------------------------
 
