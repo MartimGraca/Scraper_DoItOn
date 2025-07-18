@@ -16,6 +16,8 @@ def get_connection():
 
 # Criar estrutura das tabelas
 def criar_tabelas():
+    conn = None
+    cursor = None
     try:
         conn = get_connection()
         cursor = conn.cursor()
@@ -126,7 +128,6 @@ def criar_tabelas():
         if cursor is not None:
             cursor.close()
         if conn is not None:
-            # Fecha a conexão corretamente para SQLite ou MySQL
             if hasattr(conn, "is_connected"):
                 if conn.is_connected():
                     conn.close()
