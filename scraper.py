@@ -16,7 +16,7 @@ logging.basicConfig(
     filename="scraper_log.txt",
     filemode="w",
     format="%(asctime)s - %(levelname)s - %(message)s",
-    level=logging.INFO
+       level=logging.INFO
 )
 
 
