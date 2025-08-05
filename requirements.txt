@@ -90,4 +90,5 @@ websocket-client
 websockets
 wsproto
 yarl
+setuptools==65.5.1
 
