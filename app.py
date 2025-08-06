@@ -46,7 +46,7 @@ cursor = conn.cursor()
 
 
 def get_role_id_by_name(name):
-    cursor.execute("SELECT id FROM roles WHERE name = ?", (name,))
+    cursor.execute("SELECT id FROM roles WHERE name = %s", (name,))
     result = cursor.fetchone()
     return result[0] if result else None
 
@@ -83,7 +83,7 @@ def get_media_by_cliente(cliente_id):
 def insert_media(nome, url, cliente_id, tipologia, segmento, tier):
     cursor.execute("""
         INSERT INTO media (nome, url, cliente_id, tipologia, segmento, tier)
-        VALUES (?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s)
     """, (nome, url, cliente_id, tipologia, segmento, tier))
     conn.commit()
 
