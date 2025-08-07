@@ -10,6 +10,7 @@ from datetime import datetime
 import nest_asyncio
 from dotenv import load_dotenv
 import bcrypt
+import mysql.connector
 
 from scraper import executar_scraper
 from scraper import get_site_name
@@ -39,11 +40,7 @@ from database import get_connection
 conn = get_connection()
 cursor = conn.cursor()
 
-
-
-# ----------- Utilitários -----------
-
-
+# ----------- Funções de BD -----------
 
 def get_role_id_by_name(name):
     cursor.execute("SELECT id FROM roles WHERE name = %s", (name,))
@@ -52,7 +49,7 @@ def get_role_id_by_name(name):
 
 
 def get_role_name(role_id):
-    cursor.execute("SELECT name FROM roles WHERE id = ?", (role_id,))
+    cursor.execute("SELECT name FROM roles WHERE id = %s", (role_id,))
     result = cursor.fetchone()
     return result[0] if result else None
 
@@ -61,7 +58,7 @@ def get_all_users():
     return cursor.fetchall()
 
 def update_user_role(user_id, new_role_id):
-    cursor.execute("UPDATE users SET role_id = ? WHERE id = ?", (new_role_id, user_id))
+    cursor.execute("UPDATE users SET role_id = %s WHERE id = %s", (new_role_id, user_id))
     conn.commit()
 
 def get_roles():
@@ -72,82 +69,63 @@ def get_clientes(email, role):
     if role in ("admin", "account") or email is None:
         cursor.execute("SELECT id, nome, perfil, tier, keywords, logo, email FROM clientes")
     else:
-        cursor.execute("SELECT id, nome, perfil, tier, keywords, logo, email FROM clientes WHERE email = ?", (email,))
+        cursor.execute("SELECT id, nome, perfil, tier, keywords, logo, email FROM clientes WHERE email = %s", (email,))
     return cursor.fetchall()
 
 
 def get_media_by_cliente(cliente_id):
-    cursor.execute("SELECT id, nome, url, tipologia, segmento FROM media WHERE cliente_id = ?", (cliente_id,))
+    cursor.execute("SELECT id, nome, url, tipologia, segmento FROM media WHERE cliente_id = %s", (cliente_id,))
     return cursor.fetchall()
 
 def insert_media(nome, url, cliente_id, tipologia, segmento, tier):
-    cursor.execute("""
-        INSERT INTO media (nome, url, cliente_id, tipologia, segmento, tier)
-        VALUES (%s, %s, %s, %s, %s, %s)
-    """, (nome, url, cliente_id, tipologia, segmento, tier))
+    cursor.execute(
+        "INSERT INTO media (nome, url, cliente_id, tipologia, segmento, tier) VALUES (%s, %s, %s, %s, %s, %s)",
+        (nome, url, cliente_id, tipologia, segmento, tier)
+    )
     conn.commit()
 
 
 def media_existe(nome, cliente_id):
-    conn = sqlite3.connect("database.db")
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT * FROM media
-        WHERE nome = ? AND cliente_id = ?
-    """, (nome, cliente_id))
-    resultado = cursor.fetchone()
-    conn.close()
-    return resultado
-
-
-
+    cursor.execute(
+        "SELECT * FROM media WHERE nome = %s AND cliente_id = %s",
+        (nome, cliente_id)
+    )
+    return cursor.fetchone()
 
 def obter_tier_por_nome(nome):
-    cursor.execute("SELECT tier FROM media WHERE LOWER(nome) = LOWER(?) LIMIT 1", (nome,))
+    cursor.execute("SELECT tier FROM media WHERE LOWER(nome) = LOWER(%s) LIMIT 1", (nome,))
     resultado = cursor.fetchone()
     if resultado:
         return resultado[0]
     return None
 
 def update_media(media_id, nome, url, tipologia, segmento, tier):
-    conn = sqlite3.connect("database.db")
-    cursor = conn.cursor()
-    cursor.execute("""
-        UPDATE media
-        SET nome = ?, url = ?, tipologia = ?, segmento = ?, tier = ?
-        WHERE id = ?
-    """, (nome, url, tipologia, segmento, tier, media_id))
+    cursor.execute(
+        "UPDATE media SET nome = %s, url = %s, tipologia = %s, segmento = %s, tier = %s WHERE id = %s",
+        (nome, url, tipologia, segmento, tier, media_id)
+    )
     conn.commit()
-    conn.close()
-
-
-
 
 def extrair_nome_midia(site_name, titulo):
-
     if "|" in titulo:
         candidato = titulo.split("|")[-1].strip()
         if 2 <= len(candidato) <= 40 and not candidato.lower().startswith("www."):
             return candidato
-
     site_name = site_name.lower().replace("www.", "")
     dominio = site_name.split(".")[0]
     return dominio.capitalize()
 
-
-
-# ----------- Eliminar -----------
 def delete_cliente(cliente_id):
-    cursor.execute("DELETE FROM media WHERE cliente_id = ?", (cliente_id,))
-    cursor.execute("DELETE FROM clientes WHERE id = ?", (cliente_id,))
+    cursor.execute("DELETE FROM media WHERE cliente_id = %s", (cliente_id,))
+    cursor.execute("DELETE FROM clientes WHERE id = %s", (cliente_id,))
     conn.commit()
 
 def delete_users(user_id):
-    cursor.execute("DELETE FROM users WHERE id = ?", (user_id,))
-conn.commit()
+    cursor.execute("DELETE FROM users WHERE id = %s", (user_id,))
+    conn.commit()
 
 def eliminar_midia(midia_id):
-    cursor.execute("DELETE FROM media WHERE id=?", (midia_id,))
+    cursor.execute("DELETE FROM media WHERE id = %s", (midia_id,))
     conn.commit()
 
 

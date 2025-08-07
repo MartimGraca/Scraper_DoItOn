@@ -1,4 +1,4 @@
-import sqlite3
+import mysql.connector
 import bcrypt
 from datetime import datetime
 import os
@@ -91,3 +91,11 @@ def login_falhou(st):
     if "tentativas_login" not in st.session_state:
         st.session_state["tentativas_login"] = 0
     st.session_state["tentativas_login"] += 1
+
+def get_connection():
+    return mysql.connector.connect(
+        host=os.getenv("DB_HOST"),
+        user=os.getenv("DB_USER"),
+        password=os.getenv("DB_PASSWORD"),
+        database=os.getenv("DB_NAME")
+    )
