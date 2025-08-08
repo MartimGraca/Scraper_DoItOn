@@ -12,11 +12,26 @@ from dotenv import load_dotenv
 load_dotenv()
 ADMIN_EMAIL = os.getenv("ADMIN_EMAIL")
 
+def register_user(username: str, email: str, password: str):
+    if not username or not email or not password:
+        raise ValueError("Todos os campos são obrigatórios.")
 
+    if ADMIN_EMAIL and email.strip().lower() == ADMIN_EMAIL.strip().lower():
+        role_name = "admin"
+    else:
+        role_name = "user"
 
-# ---------------------------
-# UTILITÁRIOS DE PASSWORD
-# ---------------------------
+    role_id = get_role_id_by_name(role_name)
+    if role_id is None:
+        raise ValueError(f"Role '{role_name}' não encontrada.")
+
+    hashed = hash_password(password)
+    cursor.execute(
+        "INSERT INTO users (username, email, password_hash, role_id) VALUES (%s, %s, %s, %s)",
+        (username, email, hashed, role_id)
+    )
+    conn.commit()
+
 
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
@@ -36,27 +51,6 @@ def get_role_id_by_name(name: str):
     cursor.execute("SELECT id FROM roles WHERE name = %s", (name,))
     result = cursor.fetchone()
     return result[0] if result else None
-
-def register_user(username: str, email: str, password: str):
-    if not username or not email or not password:
-        raise ValueError("Todos os campos são obrigatórios.")
-
-    if email.strip().lower() == ADMIN_EMAIL.strip().lower():
-        role_name = "admin"
-    else:
-        role_name = "user"
-
-    role_id = get_role_id_by_name(role_name)
-    if role_id is None:
-        raise ValueError(f"Role '{role_name}' não encontrada.")
-
-    hashed = hash_password(password)
-    cursor.execute(
-        "INSERT INTO users (username, email, password_hash, role_id) VALUES (%s, %s, %s, %s)",
-        (username, email, hashed, role_id)
-    )
-    conn.commit()
-
 
 def get_role_name(role_id: int) -> str:
     cursor.execute("SELECT name FROM roles WHERE id = %s", (role_id,))
