@@ -20,9 +20,14 @@ def register_user(username: str, email: str, password: str):
         role_name = "admin"
     else:
         role_name = "user"
+    
     role_id = get_role_id_by_name(role_name)
     if role_id is None:
-        raise ValueError(f"Role '{role_name}' não encontrada.")
+        # CORREÇÃO: Se a role não existir, criar automaticamente
+        print(f"⚠️ Role '{role_name}' não encontrada. A criar automaticamente...")
+        role_id = criar_role_se_nao_existir(role_name)
+        if role_id is None:
+            raise ValueError(f"Não foi possível criar a role '{role_name}'.")
 
     hashed = hash_password(password)
     cursor.execute(
@@ -31,6 +36,23 @@ def register_user(username: str, email: str, password: str):
     )
     conn.commit()
 
+def criar_role_se_nao_existir(role_name: str):
+    """
+    Cria uma role se ela não existir e retorna o seu ID.
+    """
+    try:
+        cursor.execute("INSERT INTO roles (name) VALUES (%s)", (role_name,))
+        conn.commit()
+        print(f"✅ Role '{role_name}' criada com sucesso.")
+        return cursor.lastrowid
+    except mysql.connector.IntegrityError:
+        # Role já existe, buscar o ID
+        cursor.execute("SELECT id FROM roles WHERE name = %s", (role_name,))
+        result = cursor.fetchone()
+        return result[0] if result else None
+    except Exception as e:
+        print(f"❌ Erro ao criar role '{role_name}': {e}")
+        return None
 
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
@@ -45,7 +67,7 @@ def check_password(password: str, hashed: str) -> bool:
 def get_user(email: str):
     cursor.execute("SELECT id, username, email, password_hash, role_id FROM users WHERE email = %s", (email,))
     return cursor.fetchone()
-    
+
 def get_role_id_by_name(name: str):
     cursor.execute("SELECT id FROM roles WHERE name = %s", (name,))
     result = cursor.fetchone()

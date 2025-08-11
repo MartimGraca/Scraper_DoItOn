@@ -14,6 +14,44 @@ def get_connection():
         database=os.getenv("DB_NAME")
     )
 
+# Função para garantir que as roles existem
+def garantir_roles_existem():
+    """
+    Garante que as roles necessárias existem na base de dados.
+    Esta função deve ser chamada sempre que a aplicação inicia.
+    """
+    conn = None
+    cursor = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        # Verificar se cada role existe individualmente e inserir se necessário
+        roles_necessarias = ["user", "account", "admin"]
+        
+        for role_name in roles_necessarias:
+            cursor.execute("SELECT COUNT(*) FROM roles WHERE name = %s", (role_name,))
+            if cursor.fetchone()[0] == 0:
+                cursor.execute("INSERT INTO roles (name) VALUES (%s)", (role_name,))
+                print(f"✅ Role '{role_name}' inserida na base de dados.")
+        
+        conn.commit()
+        print("✅ Verificação de roles concluída.")
+        
+    except Error as e:
+        print(f"❌ Erro ao garantir roles: {e}")
+        if conn:
+            conn.rollback()
+    finally:
+        if cursor is not None:
+            cursor.close()
+        if conn is not None:
+            if hasattr(conn, "is_connected"):
+                if conn.is_connected():
+                    conn.close()
+            else:
+                conn.close()
+
 # Criar estrutura das tabelas
 def criar_tabelas():
     conn = None
@@ -111,16 +149,8 @@ def criar_tabelas():
         conn.commit()
         print("✅ Tabelas criadas/verificadas com sucesso.")
 
-        # Inserir roles iniciais se necessário
-        cursor.execute("SELECT COUNT(*) FROM roles")
-        if cursor.fetchone()[0] == 0:
-            cursor.executemany("INSERT INTO roles (name) VALUES (%s)", [
-                ("user",),
-                ("account",),
-                ("admin",)
-            ])
-            conn.commit()
-            print("✅ Roles iniciais inseridos.")
+        # Garantir que as roles existem após criar as tabelas
+        garantir_roles_existem()
 
     except Error as e:
         print(f"❌ Erro ao criar tabelas: {e}")
