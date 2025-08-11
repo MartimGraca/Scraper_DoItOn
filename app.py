@@ -1,4 +1,4 @@
-import math
+import math 
 import pandas as pd
 import plotly.express as px
 import streamlit as st
@@ -178,7 +178,7 @@ if st.session_state.user is None:
                 register_user(username, reg_email, reg_password)
                 log_action(reg_email, "registo de novo utilizador", "utilizador")
                 st.success("Conta criada com sucesso! Faça login.")
-            except sqlite3.IntegrityError:
+            except mysql.connector.IntegrityError:
                 st.error("Email já registado.")
             except ValueError as e:
                 st.error(str(e))

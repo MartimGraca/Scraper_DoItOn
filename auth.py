@@ -20,7 +20,6 @@ def register_user(username: str, email: str, password: str):
         role_name = "admin"
     else:
         role_name = "user"
-
     role_id = get_role_id_by_name(role_name)
     if role_id is None:
         raise ValueError(f"Role '{role_name}' não encontrada.")
@@ -46,7 +45,7 @@ def check_password(password: str, hashed: str) -> bool:
 def get_user(email: str):
     cursor.execute("SELECT id, username, email, password_hash, role_id FROM users WHERE email = %s", (email,))
     return cursor.fetchone()
-
+    
 def get_role_id_by_name(name: str):
     cursor.execute("SELECT id FROM roles WHERE name = %s", (name,))
     result = cursor.fetchone()
