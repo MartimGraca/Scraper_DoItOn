@@ -79,16 +79,42 @@ def get_role_name(role_id: int) -> str:
     return result[0] if result else "Desconhecido"
 
 # ---------------------------
-# LOGGING
+# LOGGING COM VERIFICAÇÃO DE TABELA
 # ---------------------------
 
 def log_action(user_email: str, action: str, target: str):
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    cursor.execute(
-        "INSERT INTO logs (timestamp, user_email, action, target) VALUES (%s, %s, %s, %s)",
-        (timestamp, user_email, action, target)
-    )
-    conn.commit()
+    """
+    Regista uma ação no log, com verificação se a tabela logs existe.
+    """
+    try:
+        # Verificar se a tabela logs existe antes de tentar inserir
+        cursor.execute("SHOW TABLES LIKE 'logs'")
+        if not cursor.fetchone():
+            print("⚠️ Tabela 'logs' não encontrada. A criar...")
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS logs (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                timestamp TEXT,
+                user_email TEXT,
+                action TEXT,
+                target TEXT
+            );
+            """)
+            conn.commit()
+            print("✅ Tabela 'logs' criada.")
+        
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        cursor.execute(
+            "INSERT INTO logs (timestamp, user_email, action, target) VALUES (%s, %s, %s, %s)",
+            (timestamp, user_email, action, target)
+        )
+        conn.commit()
+        print(f"📝 Log registado: {user_email} - {action}")
+        
+    except Exception as e:
+        print(f"❌ Erro ao registar log: {e}")
+        # Não falhar a aplicação por causa de um erro de log
+        pass
 
 # ---------------------------
 # PROTEÇÃO CONTRA TENTATIVAS
