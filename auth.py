@@ -12,11 +12,29 @@ from dotenv import load_dotenv
 load_dotenv()
 ADMIN_EMAIL = os.getenv("ADMIN_EMAIL")
 
+def is_admin_email(email):
+    """
+    Verifica se um email está na lista de emails de administrador.
+    Suporta múltiplos emails separados por vírgula no .env
+    """
+    if not ADMIN_EMAIL:
+        return False
+    
+    # Processar múltiplos emails no ADMIN_EMAIL
+    admin_emails = []
+    if ADMIN_EMAIL:
+        # Remover aspas e dividir por vírgula
+        emails_raw = ADMIN_EMAIL.replace('"', '').replace("'", "")
+        admin_emails = [e.strip().lower() for e in emails_raw.split(',') if e.strip()]
+    
+    return email.strip().lower() in admin_emails
+
 def register_user(username: str, email: str, password: str):
     if not username or not email or not password:
         raise ValueError("Todos os campos são obrigatórios.")
 
-    if ADMIN_EMAIL and email.strip().lower() == ADMIN_EMAIL.strip().lower():
+    # Verificar se é email de admin
+    if is_admin_email(email):
         role_name = "admin"
     else:
         role_name = "user"
@@ -30,11 +48,28 @@ def register_user(username: str, email: str, password: str):
             raise ValueError(f"Não foi possível criar a role '{role_name}'.")
 
     hashed = hash_password(password)
-    cursor.execute(
-        "INSERT INTO users (username, email, password_hash, role_id) VALUES (%s, %s, %s, %s)",
-        (username, email, hashed, role_id)
-    )
-    conn.commit()
+    
+    # Verificar se o email já existe
+    existing_user = get_user(email)
+    if existing_user:
+        # Se é admin e já existe, permitir atualização de username/password
+        if is_admin_email(email):
+            cursor.execute(
+                "UPDATE users SET username = %s, password_hash = %s WHERE email = %s",
+                (username, hashed, email)
+            )
+            conn.commit()
+            print(f"✅ Utilizador admin '{email}' atualizado com sucesso.")
+        else:
+            raise mysql.connector.IntegrityError("Email já registado.")
+    else:
+        # Criar novo utilizador
+        cursor.execute(
+            "INSERT INTO users (username, email, password_hash, role_id) VALUES (%s, %s, %s, %s)",
+            (username, email, hashed, role_id)
+        )
+        conn.commit()
+        print(f"✅ Novo utilizador '{email}' criado com role '{role_name}'.")
 
 def criar_role_se_nao_existir(role_name: str):
     """
@@ -76,7 +111,7 @@ def get_role_id_by_name(name: str):
 def get_role_name(role_id: int) -> str:
     cursor.execute("SELECT name FROM roles WHERE id = %s", (role_id,))
     result = cursor.fetchone()
-    return result[0] if result else "Desconhecido"
+    return result[0] if result else "user"
 
 # ---------------------------
 # LOGGING COM VERIFICAÇÃO DE TABELA

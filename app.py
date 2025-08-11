@@ -1,3 +1,5 @@
+
+
 import math 
 import pandas as pd
 import plotly.express as px
@@ -23,16 +25,14 @@ multiprocessing.set_start_method("spawn", force=True)
 import asyncio
 import sys
 from st_aggrid import AgGrid
-from auth import get_user, check_password, register_user, log_action, login_tentativas_check, login_falhou
+from auth import get_user, check_password, register_user, log_action, login_tentativas_check, login_falhou, get_role_name
 import os
 
 load_dotenv()
 ADMIN_EMAIL = os.getenv("ADMIN_EMAIL")
 
-
 if sys.platform.startswith('win'):
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
-
 
 # ----------- Configuração da BD -----------
 from database import get_connection
@@ -40,16 +40,24 @@ from database import get_connection
 conn = get_connection()
 cursor = conn.cursor()
 
-# ----------- Funções de BD -----------
+# ----------- Funções de BD com verificação de tabelas -----------
+
+def verificar_e_criar_tabela_se_necessario(nome_tabela, sql_criacao):
+    """
+    Verifica se uma tabela existe e cria-a se necessário.
+    """
+    try:
+        cursor.execute(f"SHOW TABLES LIKE '{nome_tabela}'")
+        if not cursor.fetchone():
+            print(f"⚠️ Tabela '{nome_tabela}' não encontrada. A criar...")
+            cursor.execute(sql_criacao)
+            conn.commit()
+            print(f"✅ Tabela '{nome_tabela}' criada.")
+    except Exception as e:
+        print(f"❌ Erro ao verificar/criar tabela '{nome_tabela}': {e}")
 
 def get_role_id_by_name(name):
     cursor.execute("SELECT id FROM roles WHERE name = %s", (name,))
-    result = cursor.fetchone()
-    return result[0] if result else None
-
-
-def get_role_name(role_id):
-    cursor.execute("SELECT name FROM roles WHERE id = %s", (role_id,))
     result = cursor.fetchone()
     return result[0] if result else None
 
@@ -66,14 +74,40 @@ def get_roles():
     return cursor.fetchall()
 
 def get_clientes(email, role):
+    # Verificar se a tabela clientes existe
+    verificar_e_criar_tabela_se_necessario("clientes", """
+    CREATE TABLE IF NOT EXISTS clientes (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        nome VARCHAR(255) NOT NULL,
+        perfil TEXT,
+        tier INT CHECK(tier BETWEEN 1 AND 4) DEFAULT 4,
+        keywords TEXT,
+        logo LONGBLOB,
+        email VARCHAR(255)
+    );
+    """)
+    
     if role in ("admin", "account") or email is None:
         cursor.execute("SELECT id, nome, perfil, tier, keywords, logo, email FROM clientes")
     else:
         cursor.execute("SELECT id, nome, perfil, tier, keywords, logo, email FROM clientes WHERE email = %s", (email,))
     return cursor.fetchall()
 
-
 def get_media_by_cliente(cliente_id):
+    # Verificar se a tabela media existe
+    verificar_e_criar_tabela_se_necessario("media", """
+    CREATE TABLE IF NOT EXISTS media (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        nome VARCHAR(255),
+        url TEXT UNIQUE,
+        cliente_id INT NOT NULL,
+        tipologia VARCHAR(100),
+        segmento VARCHAR(100),
+        tier INT CHECK(tier BETWEEN 1 AND 4) DEFAULT 4,
+        FOREIGN KEY (cliente_id) REFERENCES clientes(id)
+    );
+    """)
+    
     cursor.execute("SELECT id, nome, url, tipologia, segmento FROM media WHERE cliente_id = %s", (cliente_id,))
     return cursor.fetchall()
 
@@ -83,7 +117,6 @@ def insert_media(nome, url, cliente_id, tipologia, segmento, tier):
         (nome, url, cliente_id, tipologia, segmento, tier)
     )
     conn.commit()
-
 
 def media_existe(nome, cliente_id):
     cursor.execute(
@@ -129,10 +162,7 @@ def eliminar_midia(midia_id):
     conn.commit()
 
 
-
-
 # ----------- Autenticação -----------
-
 
 if "user" not in st.session_state:
     st.session_state.user = None
@@ -153,13 +183,16 @@ if st.session_state.user is None:
         if st.button("Entrar"):
             user = get_user(email)
             if user and check_password(password, user[3]):
+                # CORREÇÃO: Usar a role real da base de dados
+                role_name = get_role_name(user[4])  # user[4] é role_id
+                
                 st.session_state.user = {
                     "id": user[0],
                     "username": user[1],
                     "email": user[2],
                     "role_id": user[4],
-                    "role_name": "admin" if email == ADMIN_EMAIL else "user",
-                    "is_admin": email == ADMIN_EMAIL
+                    "role_name": role_name,  # Usar role real da BD
+                    "is_admin": role_name == "admin"
                 }
                 log_action(email, "login de utilizador", "sistema")
                 st.session_state["tentativas_login"] = 0
