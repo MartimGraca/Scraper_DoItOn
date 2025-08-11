@@ -34,7 +34,7 @@ def garantir_roles_existem():
             cursor.execute("SELECT COUNT(*) FROM roles WHERE name = %s", (role_name,))
             if cursor.fetchone()[0] == 0:
                 cursor.execute("INSERT INTO roles (name) VALUES (%s)", (role_name,))
-                print(f"✅ Role '{role_name}' inserida na base de dados.")
+                print(f"✅ Role \'{role_name}\' inserida na base de dados.")
         
         conn.commit()
         print("✅ Verificação de roles concluída.")
@@ -65,7 +65,7 @@ def tabela_existe(cursor, nome_tabela):
 def criar_tabelas():
     conn = None
     cursor = None
-    max_tentativas = 3
+    max_tentativas = 5 # Aumentar tentativas
     tentativa = 0
     
     while tentativa < max_tentativas:
@@ -160,9 +160,9 @@ def criar_tabelas():
             for nome_tabela, sql in tabelas.items():
                 try:
                     cursor.execute(sql)
-                    print(f"✅ Tabela '{nome_tabela}' criada/verificada.")
+                    print(f"✅ Tabela \'{nome_tabela}\' criada/verificada.")
                 except Error as e:
-                    print(f"❌ Erro ao criar tabela '{nome_tabela}': {e}")
+                    print(f"❌ Erro ao criar tabela \'{nome_tabela}\': {e}")
                     raise e
 
             conn.commit()
@@ -174,9 +174,9 @@ def criar_tabelas():
                 if tabela_existe(cursor, nome_tabela):
                     tabelas_criadas.append(nome_tabela)
                 else:
-                    print(f"⚠️ Tabela '{nome_tabela}' não foi encontrada após criação.")
+                    print(f"⚠️ Tabela \'{nome_tabela}\' não foi encontrada após criação.")
 
-            print(f"📋 Tabelas confirmadas na base de dados: {', '.join(tabelas_criadas)}")
+            print(f"📋 Tabelas confirmadas na base de dados: {\', \'.join(tabelas_criadas)}")
 
             # Garantir que as roles existem após criar as tabelas
             if "roles" in tabelas_criadas:
@@ -189,8 +189,8 @@ def criar_tabelas():
             tentativa += 1
             print(f"❌ Erro na tentativa {tentativa}: {e}")
             if tentativa < max_tentativas:
-                print(f"⏳ Aguardando 2 segundos antes da próxima tentativa...")
-                time.sleep(2)
+                print(f"⏳ Aguardando 5 segundos antes da próxima tentativa...") # Aumentar tempo de espera
+                time.sleep(5)
             else:
                 print(f"💥 Falha após {max_tentativas} tentativas. Erro final: {e}")
                 
@@ -226,9 +226,9 @@ def verificar_integridade_bd():
                 tabelas_em_falta.append(tabela)
         
         print(f"📊 Verificação de integridade da BD:")
-        print(f"✅ Tabelas existentes: {', '.join(tabelas_existentes)}")
+        print(f"✅ Tabelas existentes: {\', \'.join(tabelas_existentes)}")
         if tabelas_em_falta:
-            print(f"❌ Tabelas em falta: {', '.join(tabelas_em_falta)}")
+            print(f"❌ Tabelas em falta: {\', \'.join(tabelas_em_falta)}")
             return False
         else:
             print("🎉 Todas as tabelas necessárias estão presentes!")

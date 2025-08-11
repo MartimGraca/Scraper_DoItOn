@@ -10,24 +10,20 @@ cursor = conn.cursor()
 from dotenv import load_dotenv
 
 load_dotenv()
-ADMIN_EMAIL = os.getenv("ADMIN_EMAIL")
+
+# Processar ADMIN_EMAIL como uma lista de emails
+ADMIN_EMAILS_RAW = os.getenv("ADMIN_EMAIL")
+ADMIN_EMAILS = []
+if ADMIN_EMAILS_RAW:
+    # Remover aspas duplas e simples, depois dividir por vírgula
+    cleaned_emails = ADMIN_EMAILS_RAW.replace('"', '').replace("'", "")
+    ADMIN_EMAILS = [e.strip().lower() for e in cleaned_emails.split(',') if e.strip()]
 
 def is_admin_email(email):
     """
     Verifica se um email está na lista de emails de administrador.
-    Suporta múltiplos emails separados por vírgula no .env
     """
-    if not ADMIN_EMAIL:
-        return False
-    
-    # Processar múltiplos emails no ADMIN_EMAIL
-    admin_emails = []
-    if ADMIN_EMAIL:
-        # Remover aspas e dividir por vírgula
-        emails_raw = ADMIN_EMAIL.replace('"', '').replace("'", "")
-        admin_emails = [e.strip().lower() for e in emails_raw.split(',') if e.strip()]
-    
-    return email.strip().lower() in admin_emails
+    return email.strip().lower() in ADMIN_EMAILS
 
 def register_user(username: str, email: str, password: str):
     if not username or not email or not password:
@@ -42,10 +38,10 @@ def register_user(username: str, email: str, password: str):
     role_id = get_role_id_by_name(role_name)
     if role_id is None:
         # CORREÇÃO: Se a role não existir, criar automaticamente
-        print(f"⚠️ Role '{role_name}' não encontrada. A criar automaticamente...")
+        print(f"⚠️ Role \'{role_name}\' não encontrada. A criar automaticamente...")
         role_id = criar_role_se_nao_existir(role_name)
         if role_id is None:
-            raise ValueError(f"Não foi possível criar a role '{role_name}'.")
+            raise ValueError(f"Não foi possível criar a role \'{role_name}\'.")
 
     hashed = hash_password(password)
     
@@ -59,7 +55,7 @@ def register_user(username: str, email: str, password: str):
                 (username, hashed, email)
             )
             conn.commit()
-            print(f"✅ Utilizador admin '{email}' atualizado com sucesso.")
+            print(f"✅ Utilizador admin \'{email}\' atualizado com sucesso.")
         else:
             raise mysql.connector.IntegrityError("Email já registado.")
     else:
@@ -69,7 +65,7 @@ def register_user(username: str, email: str, password: str):
             (username, email, hashed, role_id)
         )
         conn.commit()
-        print(f"✅ Novo utilizador '{email}' criado com role '{role_name}'.")
+        print(f"✅ Novo utilizador \'{email}\' criado com role \'{role_name}\'.")
 
 def criar_role_se_nao_existir(role_name: str):
     """
@@ -78,7 +74,7 @@ def criar_role_se_nao_existir(role_name: str):
     try:
         cursor.execute("INSERT INTO roles (name) VALUES (%s)", (role_name,))
         conn.commit()
-        print(f"✅ Role '{role_name}' criada com sucesso.")
+        print(f"✅ Role \'{role_name}\' criada com sucesso.")
         return cursor.lastrowid
     except mysql.connector.IntegrityError:
         # Role já existe, buscar o ID
@@ -86,7 +82,7 @@ def criar_role_se_nao_existir(role_name: str):
         result = cursor.fetchone()
         return result[0] if result else None
     except Exception as e:
-        print(f"❌ Erro ao criar role '{role_name}': {e}")
+        print(f"❌ Erro ao criar role \'{role_name}\': {e}")
         return None
 
 def hash_password(password: str) -> str:
@@ -123,9 +119,9 @@ def log_action(user_email: str, action: str, target: str):
     """
     try:
         # Verificar se a tabela logs existe antes de tentar inserir
-        cursor.execute("SHOW TABLES LIKE 'logs'")
+        cursor.execute("SHOW TABLES LIKE \'logs\'")
         if not cursor.fetchone():
-            print("⚠️ Tabela 'logs' não encontrada. A criar...")
+            print("⚠️ Tabela \'logs\' não encontrada. A criar...")
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS logs (
                 id INT AUTO_INCREMENT PRIMARY KEY,
@@ -136,7 +132,7 @@ def log_action(user_email: str, action: str, target: str):
             );
             """)
             conn.commit()
-            print("✅ Tabela 'logs' criada.")
+            print("✅ Tabela \'logs\' criada.")
         
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         cursor.execute(
@@ -175,3 +171,4 @@ def get_connection():
         password=os.getenv("DB_PASSWORD"),
         database=os.getenv("DB_NAME")
     )
+

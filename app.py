@@ -274,6 +274,11 @@ if menu == "Scraper" and role_name in ["admin", "account"]:
 
     clientes = get_clientes(email=st.session_state.user["email"], role=role_name)
     nomes_clientes = [c[1] for c in clientes]
+    
+    if not nomes_clientes:
+        st.warning("⚠️ Nenhum cliente encontrado. Contacte o administrador para criar clientes.")
+        st.stop()
+    
     empresa = st.selectbox("Empresa", nomes_clientes)
     cliente_id = next((c[0] for c in clientes if c[1] == empresa), None)
 
@@ -477,7 +482,7 @@ elif menu == "Dashboard":
 elif menu == "Clientes":
     st.markdown("### 📁 Gestão de Clientes")
 
-    role = get_role_name(st.session_state.user["role_id"])
+    role =st.session_state.user["role_name"]
     email = st.session_state.user["email"]
 
     clientes = get_clientes(email=email, role=role)
