@@ -12,26 +12,30 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Processar ADMIN_EMAIL como uma lista de emails
+import os
 import json
 import re
 
 ADMIN_EMAILS_RAW = os.getenv("ADMIN_EMAIL", "")
 ADMIN_EMAILS = []
-    
+
 if ADMIN_EMAILS_RAW:
     try:
-        # Tentar ler como JSON (caso Render use ["email1", "email2"])
+        # Tenta ler como JSON (Render ou .env como lista)
         parsed = json.loads(ADMIN_EMAILS_RAW)
         if isinstance(parsed, list):
             ADMIN_EMAILS = [e.strip().lower() for e in parsed if isinstance(e, str) and e.strip()]
         elif isinstance(parsed, str):
             ADMIN_EMAILS = [parsed.strip().lower()]
-    except json.JSONDecodeError:
-        # Se não for JSON, tratar como string com vírgulas
-        cleaned_emails = re.sub(r'["\\\[\]]', '', ADMIN_EMAILS_RAW)  # remove aspas e colchetes
-        ADMIN_EMAILS = [e.strip().lower() for e in cleaned_emails.split(',') if e.strip()]
+    except Exception:
+        # Se não for JSON, trata como CSV
+        cleaned = re.sub(r'["\'\[\]]', '', ADMIN_EMAILS_RAW)
+        ADMIN_EMAILS = [e.strip().lower() for e in cleaned.split(',') if e.strip()]
 
-print(f" Emails admin carregados: {ADMIN_EMAILS}")
+print(f"ADMIN_EMAILS carregados: {ADMIN_EMAILS}")
+
+def is_admin_email(email):
+    return email.strip().lower() in ADMIN_EMAILS
 
 
 def is_admin_email(email):
@@ -41,14 +45,14 @@ def is_admin_email(email):
     return email.strip().lower() in ADMIN_EMAILS
 
 def register_user(username: str, email: str, password: str):
-    if not username or not email or not password:
-        raise ValueError("Todos os campos são obrigatórios.")
-
-    # Verificar se é email de admin
     if is_admin_email(email):
         role_name = "admin"
     else:
         role_name = "user"
+    if not username or not email or not password:
+        raise ValueError("Todos os campos são obrigatórios.")
+
+    
     
     role_id = get_role_id_by_name(role_name)
     if role_id is None:
