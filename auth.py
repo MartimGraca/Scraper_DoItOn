@@ -12,12 +12,27 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Processar ADMIN_EMAIL como uma lista de emails
-ADMIN_EMAILS_RAW = os.getenv("ADMIN_EMAIL")
+import json
+import re
+
+ADMIN_EMAILS_RAW = os.getenv("ADMIN_EMAIL", "")
 ADMIN_EMAILS = []
+
 if ADMIN_EMAILS_RAW:
-    # Remover aspas duplas e simples, depois dividir por vírgula
-    cleaned_emails = ADMIN_EMAILS_RAW.replace('"', '').replace("'", "")
-    ADMIN_EMAILS = [e.strip().lower() for e in cleaned_emails.split(',') if e.strip()]
+    try:
+        # Tentar ler como JSON (caso Render use ["email1", "email2"])
+        parsed = json.loads(ADMIN_EMAILS_RAW)
+        if isinstance(parsed, list):
+            ADMIN_EMAILS = [e.strip().lower() for e in parsed if isinstance(e, str) and e.strip()]
+        elif isinstance(parsed, str):
+            ADMIN_EMAILS = [parsed.strip().lower()]
+    except json.JSONDecodeError:
+        # Se não for JSON, tratar como string com vírgulas
+        cleaned_emails = re.sub(r'["\\\[\]]', '', ADMIN_EMAILS_RAW)  # remove aspas e colchetes
+        ADMIN_EMAILS = [e.strip().lower() for e in cleaned_emails.split(',') if e.strip()]
+
+print(f" Emails admin carregados: {ADMIN_EMAILS}")
+
 
 def is_admin_email(email):
     """
@@ -171,4 +186,6 @@ def get_connection():
         password=os.getenv("DB_PASSWORD"),
         database=os.getenv("DB_NAME")
     )
+
+
 
