@@ -198,7 +198,7 @@ def executar_scraper_google(keyword, filtro_tempo):
     options = uc.ChromeOptions()
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_argument("--headless=new")
+   #options.add_argument("--headless=new")
     options.add_argument("--disable-dev-shm-usage")
 
     # Caminho certo para Chromium no Docker/Render!
