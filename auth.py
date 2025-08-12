@@ -17,7 +17,7 @@ import re
 
 ADMIN_EMAILS_RAW = os.getenv("ADMIN_EMAIL", "")
 ADMIN_EMAILS = []
-
+    
 if ADMIN_EMAILS_RAW:
     try:
         # Tentar ler como JSON (caso Render use ["email1", "email2"])

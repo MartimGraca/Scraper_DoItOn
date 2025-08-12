@@ -176,7 +176,7 @@ def criar_tabelas():
                 else:
                     print(f"⚠️ Tabela \'{nome_tabela}\' não foi encontrada após criação.")
 
-            print(f"📋 Tabelas confirmadas na base de dados: {", ".join(tabelas_criadas)}")
+            print(f"📋 Tabelas confirmadas na base de dados: {', '.join(tabelas_criadas)}")
 
             # Garantir que as roles existem após criar as tabelas
             if "roles" in tabelas_criadas:
