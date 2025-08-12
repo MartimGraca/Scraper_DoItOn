@@ -106,7 +106,7 @@ def criar_tabelas():
                     id INT AUTO_INCREMENT PRIMARY KEY,
                     nome VARCHAR(255) NOT NULL,
                     perfil TEXT,
-                    tier INT CHECK(tier BETWEEN 1 AND 4) DEFAULT 4,
+                    tier INT DEFAULT 4 CHECK (tier BETWEEN 1 AND 4),
                     keywords TEXT,
                     logo LONGBLOB,
                     email VARCHAR(255)
@@ -120,7 +120,7 @@ def criar_tabelas():
                     cliente_id INT NOT NULL,
                     tipologia VARCHAR(100),
                     segmento VARCHAR(100),
-                    tier INT CHECK(tier BETWEEN 1 AND 4) DEFAULT 4,
+                    tier INT DEFAULT 4 CHECK (tier BETWEEN 1 AND 4),
                     FOREIGN KEY (cliente_id) REFERENCES clientes(id)
                 );
                 """,
@@ -160,13 +160,13 @@ def criar_tabelas():
             for nome_tabela, sql in tabelas.items():
                 try:
                     cursor.execute(sql)
-                    print(f"✅ Tabela \'{nome_tabela}\' criada/verificada.")
+                    print(f" Tabela \'{nome_tabela}\' criada/verificada.")
                 except Error as e:
-                    print(f"❌ Erro ao criar tabela \'{nome_tabela}\' : {e}")
+                    print(f" Erro ao criar tabela \'{nome_tabela}\' : {e}")
                     raise e
 
             conn.commit()
-            print("✅ Todas as tabelas criadas/verificadas com sucesso.")
+            print(" Todas as tabelas criadas/verificadas com sucesso.")
 
             # Verificar se todas as tabelas foram realmente criadas
             tabelas_criadas = []
@@ -176,7 +176,7 @@ def criar_tabelas():
                 else:
                     print(f"⚠️ Tabela \'{nome_tabela}\' não foi encontrada após criação.")
 
-            print(f"📋 Tabelas confirmadas na base de dados: {', '.join(tabelas_criadas)}")
+            print(f" Tabelas confirmadas na base de dados: {', '.join(tabelas_criadas)}")
 
             # Garantir que as roles existem após criar as tabelas
             if "roles" in tabelas_criadas:
@@ -187,12 +187,12 @@ def criar_tabelas():
 
         except Error as e:
             tentativa += 1
-            print(f"❌ Erro na tentativa {tentativa}: {e}")
+            print(f" Erro na tentativa {tentativa}: {e}")
             if tentativa < max_tentativas:
-                print(f"⏳ Aguardando 5 segundos antes da próxima tentativa...") # Aumentar tempo de espera
+                print(f" Aguardando 5 segundos antes da próxima tentativa...") # Aumentar tempo de espera
                 time.sleep(5)
             else:
-                print(f"💥 Falha após {max_tentativas} tentativas. Erro final: {e}")
+                print(f" Falha após {max_tentativas} tentativas. Erro final: {e}")
                 
         finally:
             if cursor is not None:
