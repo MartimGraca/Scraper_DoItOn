@@ -508,7 +508,7 @@ elif menu == "Clientes":
                     tier_value = int(tier)
                     cursor.execute("""
                         INSERT INTO clientes (nome, perfil, tier, keywords, logo, email)
-                        VALUES (?, ?, ?, ?, ?, ?)
+                        VALUES (%s, %s, %s, %s, %s, %s)
                     """, (nome_empresa, perfil, tier_value, "", logo_bytes, email_cliente))
                     conn.commit()
                     st.success("✅ Empresa adicionada com sucesso!")
@@ -560,7 +560,7 @@ elif menu == "Clientes":
 
                 if st.button("💾 Guardar Alterações", key="update_cliente_btn"):
                     cursor.execute("""
-                        UPDATE clientes SET nome=?, perfil=?, tier=?, keywords=? WHERE id=?
+                        UPDATE clientes SET nome=%s, perfil=%s, tier=%s, keywords=%s WHERE id=%s
                     """, (novo_nome, novo_perfil, novo_tier, novas_keywords, cliente_id))
                     conn.commit()
                     st.success("✅ Cliente atualizado!")
@@ -651,8 +651,8 @@ elif menu == "Clientes":
                     if st.button("💾 Atualizar", key=f"save_{m_id}"):
                         cursor.execute("""
                             UPDATE media
-                            SET nome=?, tipologia=?, segmento=?
-                            WHERE id=?
+                            SET nome=%s, tipologia=%s, segmento=%s
+                            WHERE id=%s
                         """, (novo_nome, novo_tipologia, novo_segmento, m_id))
                         conn.commit()
                         st.success(f"✅ Media ID {m_id} atualizada com sucesso.")
@@ -930,16 +930,16 @@ if menu == "Resultados Automáticos":
                     # Guardar na tabela mídia
                     cursor.execute("""
                         INSERT OR IGNORE INTO media (nome, url, cliente_id, tipologia, segmento, tier)
-                        VALUES (?, ?, ?, ?, ?, ?)
+                        VALUES (%s, %s, %s, %s, %s, %s)
                     """, (titulo, url, cliente_id or 1, "Sugerida", keyword, 4))
-                    cursor.execute("DELETE FROM noticias_sugeridas WHERE id = ?", (id_,))
+                    cursor.execute("DELETE FROM noticias_sugeridas WHERE id = %s", (id_,))
                     conn.commit()
                     st.success("Guardado com sucesso!")
                     st.experimental_rerun()
 
             with col2:
                 if st.button(f"❌ Ignorar", key=f"ignorar_{id_}"):
-                    cursor.execute("DELETE FROM noticias_sugeridas WHERE id = ?", (id_,))
+                    cursor.execute("DELETE FROM noticias_sugeridas WHERE id = %s", (id_,))
                     conn.commit()
                     st.warning("Notícia ignorada.")
                     st.rerun()
