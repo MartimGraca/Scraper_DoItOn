@@ -1,19 +1,19 @@
 FROM python:3.10-slim
 
+# Instala Chromium e o driver
 RUN apt-get update && \
-    apt-get install -y wget gnupg2 curl unzip fonts-liberation libasound2 libatk-bridge2.0-0 libatk1.0-0 libc6 libcairo2 libcups2 libdbus-1-3 \
-    libexpat1 libfontconfig1 libgbm1 libglib2.0-0 libgtk-3-0 libnspr4 libnss3 libpango-1.0-0 libpangocairo-1.0-0 libx11-6 \
-    libxcomposite1 libxcursor1 libxdamage1 libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 libxss1 libxtst6 ca-certificates \
-    fonts-noto-color-emoji chromium-driver chromium && \
+    apt-get install -y chromium chromium-driver && \
     rm -rf /var/lib/apt/lists/*
 
+# Define o caminho do Chromium para o scraper
 ENV CHROME_BINARY=/usr/bin/chromium
 
 WORKDIR /app
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-CMD ["streamlit", "run", "app.py"]
-    
+# Arranca o Streamlit na porta esperada pelo Render ($PORT) e aceita conexões externas
+CMD ["bash", "-c", "streamlit run app.py --server.port=${PORT} --server.address=0.0.0.0"]

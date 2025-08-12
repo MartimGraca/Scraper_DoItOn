@@ -201,13 +201,14 @@ def executar_scraper_google(keyword, filtro_tempo):
     options.add_argument("--headless=new")
     options.add_argument("--disable-dev-shm-usage")
 
+    # Caminho certo para Chromium no Docker/Render!
     chrome_path = os.getenv("CHROME_BINARY", "/usr/bin/chromium")
     print("CHROME_BINARY:", chrome_path, type(chrome_path))
     if not chrome_path or not isinstance(chrome_path, str) or not chrome_path.strip():
         raise RuntimeError("CHROME_BINARY não definido ou inválido.")
-    options.binary_location = chrome_path
 
-    driver = uc.Chrome(options=options)
+    # Passa o path explicitamente!
+    driver = uc.Chrome(options=options, browser_executable_path=chrome_path)
     resultados = []
     try:
         driver.get("https://www.google.com")
