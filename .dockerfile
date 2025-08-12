@@ -1,12 +1,15 @@
 FROM python:3.10-slim
 
-# Instala Chromium e o driver
+# Instala dependências para Chrome
 RUN apt-get update && \
-    apt-get install -y chromium chromium-driver && \
+    apt-get install -y wget gnupg2 && \
+    wget -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - && \
+    sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list' && \
+    apt-get update && \
+    apt-get install -y google-chrome-stable chromium-driver && \
     rm -rf /var/lib/apt/lists/*
 
-# Define o caminho do Chromium para o scraper
-ENV CHROME_BINARY=/usr/bin/chromium
+ENV CHROME_BINARY=/usr/bin/google-chrome
 
 WORKDIR /app
 
@@ -15,5 +18,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Arranca o Streamlit na porta esperada pelo Render ($PORT) e aceita conexões externas
 CMD ["bash", "-c", "streamlit run app.py --server.port=${PORT} --server.address=0.0.0.0"]

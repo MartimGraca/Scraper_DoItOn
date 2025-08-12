@@ -1,5 +1,6 @@
 import time
 from urllib.parse import urlparse, urlunparse
+import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
@@ -195,15 +196,16 @@ def proxima_pagina(driver):
         return False
 
 def executar_scraper_google(keyword, filtro_tempo):
+   def executar_scraper_google(keyword, filtro_tempo):
     options = uc.ChromeOptions()
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-blink-features=AutomationControlled")
-   #options.add_argument("--headless=new")
     options.add_argument("--disable-dev-shm-usage")
+    # Podes adicionar headless se quiseres (mas testa sem primeiro):
+    # options.add_argument("--headless=new")
 
-    # Caminho certo para Chromium no Docker/Render!
-    chrome_path = os.getenv("CHROME_BINARY", "/usr/bin/chromium")
-    print("CHROME_BINARY:", chrome_path, type(chrome_path))
+    chrome_path = os.getenv("CHROME_BINARY", "/usr/bin/google-chrome")
+    driver = uc.Chrome(options=options, browser_executable_path=chrome_path)
     if not chrome_path or not isinstance(chrome_path, str) or not chrome_path.strip():
         raise RuntimeError("CHROME_BINARY não definido ou inválido.")
 
