@@ -7,7 +7,6 @@ from selenium.webdriver.support import expected_conditions as EC
 import undetected_chromedriver as uc
 import re
 import os
-import sys
 
 def aceitar_cookies_se_existem(driver):
     time.sleep(3)
@@ -196,26 +195,23 @@ def proxima_pagina(driver):
         return False
 
 def executar_scraper_google(keyword, filtro_tempo):
-    # Chrome Options
     options = uc.ChromeOptions()
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_argument("--headless")
+    options.add_argument("--headless=new")
     options.add_argument("--disable-dev-shm-usage")
 
-    # Chrome Binary
-    chrome_path = os.getenv("CHROME_BINARY", "/usr/bin/chromium-browser")
+    chrome_path = os.getenv("CHROME_BINARY", "/usr/bin/chromium")
+    print("CHROME_BINARY:", chrome_path, type(chrome_path))
     if not chrome_path or not isinstance(chrome_path, str) or not chrome_path.strip():
         raise RuntimeError("CHROME_BINARY não definido ou inválido.")
     options.binary_location = chrome_path
 
-    # Criar driver
     driver = uc.Chrome(options=options)
     resultados = []
     try:
         driver.get("https://www.google.com")
         aceitar_cookies_se_existem(driver)
-
         search_input = WebDriverWait(driver, 10).until(
             EC.element_to_be_clickable((By.NAME, "q"))
         )
@@ -225,7 +221,6 @@ def executar_scraper_google(keyword, filtro_tempo):
             time.sleep(0.25)
         search_input.send_keys(Keys.ENTER)
         time.sleep(3)
-
         if clicar_noticias_tab(driver):
             aplicar_filtro_tempo(driver, filtro_tempo)
             clicar_linguagem(driver)
