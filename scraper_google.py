@@ -200,7 +200,9 @@ def executar_scraper_google(keyword, filtro_tempo):
     options.add_argument("--disable-blink-features=AutomationControlled")
 
     chrome_path = os.getenv("CHROME_BINARY")
-    if chrome_path:
+    print("DEBUG CHROME_BINARY:", chrome_path, type(chrome_path))  # Debug extra!
+    # Só define se for string não vazia!
+    if chrome_path and isinstance(chrome_path, str) and chrome_path.strip():
         options.binary_location = chrome_path
 
     driver = uc.Chrome(options=options, version_main=137)
