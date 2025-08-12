@@ -229,7 +229,7 @@ def verificar_integridade_bd():
         print(f"✅ Tabelas existentes: {', '.join(tabelas_existentes)}")
         
         if tabelas_em_falta:
-            print(f"❌ Tabelas em falta: {", ".join(tabelas_em_falta)}")
+            print(f"❌ Tabelas em falta: {', '.join(tabelas_em_falta)}")
             return False
         else:
             print("🎉 Todas as tabelas necessárias estão presentes!")
