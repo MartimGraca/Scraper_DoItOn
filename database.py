@@ -226,7 +226,8 @@ def verificar_integridade_bd():
                 tabelas_em_falta.append(tabela)
         
         print(f"📊 Verificação de integridade da BD:")
-        print(f"✅ Tabelas existentes: {", ".join(tabelas_existentes)}")
+        print(f"✅ Tabelas existentes: {', '.join(tabelas_existentes)}")
+        
         if tabelas_em_falta:
             print(f"❌ Tabelas em falta: {", ".join(tabelas_em_falta)}")
             return False
