@@ -6,6 +6,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import undetected_chromedriver as uc
 import re
+import os
 
 def aceitar_cookies_se_existem(driver):
     time.sleep(3)
@@ -54,18 +55,14 @@ def aplicar_filtro_tempo(driver, filtro_tempo):
     except Exception as e:
         print(f"[ERRO filtro]: {e}")
 
-
-
 def clicar_linguagem(driver):
     try:
-        # Clica em "Pesquisar na Web"
         pesquisar_div = WebDriverWait(driver, 10).until(
             EC.element_to_be_clickable((By.XPATH, "//div[contains(@class, 'KTBKoe') and contains(text(), 'Pesquisar na Web')]"))
         )
         pesquisar_div.click()
         time.sleep(1.5)
 
-        # Clica na opção "Pesquisar páginas em Português"
         link_pt = WebDriverWait(driver, 10).until(
             EC.element_to_be_clickable((By.XPATH, "//a[contains(text(), 'Pesquisar páginas em Português')]"))
         )
@@ -74,10 +71,6 @@ def clicar_linguagem(driver):
 
     except Exception as e:
         print(f"[ERRO clicar_linguagem]: {e}")
-
-
-
-
 
 def coletar_links_noticias(driver):
     try:
@@ -205,6 +198,11 @@ def executar_scraper_google(keyword, filtro_tempo):
     options = uc.ChromeOptions()
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-blink-features=AutomationControlled")
+
+    chrome_path = os.getenv("CHROME_BINARY")
+    if chrome_path:
+        options.binary_location = chrome_path
+
     driver = uc.Chrome(options=options, version_main=137)
     resultados = []
     try:
