@@ -7,6 +7,7 @@ from selenium.webdriver.support import expected_conditions as EC
 import undetected_chromedriver as uc
 import re
 import os
+import sys
 
 def aceitar_cookies_se_existem(driver):
     time.sleep(3)
@@ -195,17 +196,21 @@ def proxima_pagina(driver):
         return False
 
 def executar_scraper_google(keyword, filtro_tempo):
+    # Chrome Options
     options = uc.ChromeOptions()
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_argument("--headless")
+    options.add_argument("--disable-dev-shm-usage")
 
-    chrome_path = os.getenv("CHROME_BINARY")
-    print("DEBUG CHROME_BINARY:", chrome_path, type(chrome_path))  # Debug extra!
-    # Só define se for string não vazia!
-    if chrome_path and isinstance(chrome_path, str) and chrome_path.strip():
-        options.binary_location = chrome_path
+    # Chrome Binary
+    chrome_path = os.getenv("CHROME_BINARY", "/usr/bin/chromium-browser")
+    if not chrome_path or not isinstance(chrome_path, str) or not chrome_path.strip():
+        raise RuntimeError("CHROME_BINARY não definido ou inválido.")
+    options.binary_location = chrome_path
 
-    driver = uc.Chrome(options=options, version_main=137)
+    # Criar driver
+    driver = uc.Chrome(options=options)
     resultados = []
     try:
         driver.get("https://www.google.com")
