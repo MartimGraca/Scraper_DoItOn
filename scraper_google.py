@@ -1,7 +1,5 @@
 import time
-import os
 import re
-import platform
 from urllib.parse import urlparse, urlunparse
 
 import undetected_chromedriver as uc
@@ -70,7 +68,6 @@ def clicar_linguagem(driver):
         )
         link_pt.click()
         time.sleep(1.5)
-
     except Exception as e:
         print(f"[ERRO clicar_linguagem]: {e}")
 
@@ -200,9 +197,9 @@ def executar_scraper_google(keyword, filtro_tempo):
     options = uc.ChromeOptions()
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_argument("--headless")
-    # Para forçar uso de Chromium do uc, não passes browser_executable_path
-    # Para forçar uma versão específica (opcional): version_main=137
+    options.add_argument("--headless")  # remove se quiseres ver o navegador
+    options.add_argument("--window-size=1280,1024")
+    # Se quiseres garantir versão específica, usa version_main=139 (ou tua versão), mas o padrão já funciona bem
     driver = uc.Chrome(options=options)
     resultados = []
     try:
@@ -253,3 +250,12 @@ def rodar_scraper_sequencial(keywords_string, filtro_tempo):
                 "keyword": kw
             })
     return all_results
+
+if __name__ == "__main__":
+    # Exemplo de uso:
+    # keywords = "Benfica, Sporting, Porto"
+    # filtro_tempo = "Última hora"
+    keywords = input("Palavras-chave separadas por vírgula: ")
+    filtro_tempo = input("Filtro de tempo (ex: 'Última hora', 'Últimas 24 horas'): ")
+    resultados = rodar_scraper_sequencial(keywords, filtro_tempo)
+    print(resultados)
