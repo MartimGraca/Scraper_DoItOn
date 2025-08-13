@@ -203,7 +203,7 @@ def executar_scraper_google(keyword, filtro_tempo):
     options.add_argument("--headless")
     # Para forçar uso de Chromium do uc, não passes browser_executable_path
     # Para forçar uma versão específica (opcional): version_main=137
-    driver = uc.Chrome(options=options, version_main=137)
+    driver = uc.Chrome(options=options)
     resultados = []
     try:
         driver.get("https://www.google.com")
