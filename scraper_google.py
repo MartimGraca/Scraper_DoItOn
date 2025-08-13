@@ -200,6 +200,7 @@ def executar_scraper_google(keyword, filtro_tempo):
     options = uc.ChromeOptions()
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_argument("--headless")
     # Para forçar uso de Chromium do uc, não passes browser_executable_path
     # Para forçar uma versão específica (opcional): version_main=137
     driver = uc.Chrome(options=options, version_main=137)
