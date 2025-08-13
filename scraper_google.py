@@ -9,10 +9,13 @@ import re
 import os
 import platform
 
+import os
+import platform
+
 def get_chrome_path():
     chrome_path = os.getenv("CHROME_BINARY")
-    if chrome_path and os.path.exists(chrome_path):
-        return chrome_path
+    if chrome_path:
+        return chrome_path  # Confia na variável de ambiente!
 
     system = platform.system()
     if system == "Windows":
