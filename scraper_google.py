@@ -60,28 +60,36 @@ def aceitar_cookies_se_existem(driver):
         pass
 
 def clicar_noticias_tab(driver):
+    wait = WebDriverWait(driver, 15)
     try:
-        noticias_tab = WebDriverWait(driver, 10).until(
+        noticias_tab = wait.until(
             EC.element_to_be_clickable((By.XPATH, "//a[contains(@href, 'tbm=nws')]"))
         )
+        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", noticias_tab)
         noticias_tab.click()
         time.sleep(2)
         return True
-    except:
+    except Exception as e:
+        print(f"[ERRO clicar_noticias_tab]: {e}")
         return False
 
 def aplicar_filtro_tempo(driver, filtro_tempo):
+    wait = WebDriverWait(driver, 15)
     try:
-        WebDriverWait(driver, 10).until(
+        ferramentas_btn = wait.until(
             EC.element_to_be_clickable((By.XPATH, "//div[text()='Ferramentas']"))
-        ).click()
+        )
+        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", ferramentas_btn)
+        ferramentas_btn.click()
         time.sleep(1.5)
-        WebDriverWait(driver, 10).until(
+        recentes_btn = wait.until(
             EC.element_to_be_clickable((By.XPATH, "//div[text()='Recentes']"))
-        ).click()
+        )
+        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", recentes_btn)
+        recentes_btn.click()
         time.sleep(1.5)
 
-        menu_itens = WebDriverWait(driver, 10).until(
+        menu_itens = wait.until(
             EC.presence_of_all_elements_located((By.XPATH, "//a[@role='menuitemradio']"))
         )
 
@@ -97,16 +105,19 @@ def aplicar_filtro_tempo(driver, filtro_tempo):
         print(f"[ERRO filtro]: {e}")
 
 def clicar_linguagem(driver):
+    wait = WebDriverWait(driver, 15)
     try:
-        pesquisar_div = WebDriverWait(driver, 10).until(
+        pesquisar_div = wait.until(
             EC.element_to_be_clickable((By.XPATH, "//div[contains(@class, 'KTBKoe') and contains(text(), 'Pesquisar na Web')]"))
         )
+        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", pesquisar_div)
         pesquisar_div.click()
         time.sleep(1.5)
 
-        link_pt = WebDriverWait(driver, 10).until(
+        link_pt = wait.until(
             EC.element_to_be_clickable((By.XPATH, "//a[contains(text(), 'Pesquisar páginas em Português')]"))
         )
+        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", link_pt)
         link_pt.click()
         time.sleep(1.5)
 
@@ -114,8 +125,9 @@ def clicar_linguagem(driver):
         print(f"[ERRO clicar_linguagem]: {e}")
 
 def coletar_links_noticias(driver):
+    wait = WebDriverWait(driver, 15)
     try:
-        blocos = WebDriverWait(driver, 10).until(
+        blocos = wait.until(
             EC.presence_of_all_elements_located((By.XPATH, "//div[@role='heading' and contains(@class,'n0jPhd')]"))
         )
         links = []
@@ -153,9 +165,12 @@ def coletar_links_noticias(driver):
         return []
 
 def visitar_links(driver, links, keyword, resultados):
+    wait = WebDriverWait(driver, 15)
     for url, data_pub in links:
         try:
-            link_element = driver.find_element(By.XPATH, f"//a[@href='{url}']")
+            link_element = wait.until(
+                EC.element_to_be_clickable((By.XPATH, f"//a[@href='{url}']"))
+            )
             driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", link_element)
             time.sleep(1)
             link_element.click()
@@ -171,7 +186,8 @@ def visitar_links(driver, links, keyword, resultados):
             ]
             for xpath in possiveis_botoes:
                 try:
-                    btn = WebDriverWait(driver, 3).until(EC.element_to_be_clickable((By.XPATH, xpath)))
+                    btn = wait.until(EC.element_to_be_clickable((By.XPATH, xpath)))
+                    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn)
                     btn.click()
                     break
                 except:
@@ -226,10 +242,13 @@ def visitar_links(driver, links, keyword, resultados):
                 continue
 
 def proxima_pagina(driver):
+    wait = WebDriverWait(driver, 15)
     try:
-        WebDriverWait(driver, 5).until(
+        btn = wait.until(
             EC.element_to_be_clickable((By.ID, "pnnext"))
-        ).click()
+        )
+        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn)
+        btn.click()
         time.sleep(3)
         return True
     except:
@@ -237,7 +256,8 @@ def proxima_pagina(driver):
 
 def executar_scraper_google(keyword, filtro_tempo):
     options = uc.ChromeOptions()
-   # options.add_argument('--headless=new')
+   
+    options.add_argument('--headless=new')  # Comenta esta linha para ver o browser
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
     options.add_argument('--disable-gpu')
@@ -252,13 +272,16 @@ def executar_scraper_google(keyword, filtro_tempo):
     driver = uc.Chrome(options=options, browser_executable_path=chrome_path)
 
     resultados = []
+    wait = WebDriverWait(driver, 15)
     try:
         driver.get("https://www.google.com")
         aceitar_cookies_se_existem(driver)
-        search_input = WebDriverWait(driver, 10).until(
+        search_input = wait.until(
             EC.element_to_be_clickable((By.NAME, "q"))
         )
-        time.sleep(2)
+        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", search_input)
+        search_input.clear()
+        time.sleep(1)
         for letra in keyword:
             search_input.send_keys(letra)
             time.sleep(0.25)
@@ -267,7 +290,7 @@ def executar_scraper_google(keyword, filtro_tempo):
         if clicar_noticias_tab(driver):
             aplicar_filtro_tempo(driver, filtro_tempo)
             clicar_linguagem(driver)
-            WebDriverWait(driver, 10).until(
+            wait.until(
                 EC.presence_of_element_located((By.XPATH, "//div[@role='heading']"))
             )
             while True:
