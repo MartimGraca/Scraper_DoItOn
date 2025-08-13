@@ -671,8 +671,9 @@ elif menu == "Clientes":
 elif menu == "Admin DB" and st.session_state.user["is_admin"]:
     st.title("📂 Acesso Base de Dados")
 
-    # Diagnóstico: ver tabelas disponíveis
-    tabelas = cursor.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+    # Diagnóstico: ver tabelas disponíveis (MySQL)
+    cursor.execute("SHOW TABLES;")
+    tabelas = cursor.fetchall()
     tabelas_nomes = [t[0] for t in tabelas]
     if not tabelas_nomes:
         st.warning("🚫 Nenhuma tabela encontrada na base de dados.")
