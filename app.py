@@ -1,5 +1,4 @@
 
-
 import math 
 import pandas as pd
 import plotly.express as px
@@ -43,9 +42,7 @@ cursor = conn.cursor()
 # ----------- Funções de BD com verificação de tabelas -----------
 
 def verificar_e_criar_tabela_se_necessario(nome_tabela, sql_criacao):
-    """
-    Verifica se uma tabela existe e cria-a se necessário.
-    """
+
     try:
         cursor.execute(f"SHOW TABLES LIKE '{nome_tabela}'")
         if not cursor.fetchone():
@@ -387,13 +384,19 @@ if menu == "Scraper" and role_name in ["admin", "account"]:
                             st.success(f"✅ {len(resultados_kw)} resultados encontrados para: '{kw}'")
                         except Exception as e:
                             st.error(f"❌ Erro ao processar keyword '{kw}': {e}")
+                        
+                        
 
-        for grupo in st.session_state["resultados_scraper"]:
-            kw = grupo["keyword"]
-            resultados_kw = grupo["resultados"]
+                for grupo in st.session_state["resultados_scraper"]:
+                  kw = grupo["keyword"]
+                  resultados_kw = grupo["resultados"]
 
-            st.subheader(f"📑 Resultados do Google para : {kw}")
-            for i, resultado in enumerate(resultados_kw):
+    st.subheader(f"📑 Resultados do Google para : {kw}")
+    if not isinstance(resultados_kw, list):
+        st.error("❌ O scraper não devolveu resultados válidos para esta keyword.")
+        resultados_kw = []
+
+    for i, resultado in enumerate(resultados_kw):
                 link = resultado["link"]
                 site_name = resultado.get("site", "Desconhecido")
                 titulo = resultado.get("titulo", "Sem título")
