@@ -1,53 +1,14 @@
 import time
+import os
+import re
+import platform
 from urllib.parse import urlparse, urlunparse
+
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-import re
-import platform
-import os
-import subprocess
-
-print("CHROME_BINARY ENV:", os.getenv("CHROME_BINARY"))
-print("Conteúdo de /usr/bin:")
-print(subprocess.getoutput("ls -l /usr/bin | grep chrome"))
-
-
-def get_chrome_path():
-    chrome_path = os.getenv("CHROME_BINARY")
-    if chrome_path:
-        if os.path.exists(chrome_path):
-            return chrome_path
-        else:
-            raise RuntimeError(f"CHROME_BINARY definido na ENV mas o caminho não existe: {chrome_path}")
-  
-    system = platform.system()
-    if system == "Windows":
-        candidates = [
-            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"
-        ]
-    elif system == "Darwin":
-        candidates = [
-            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-        ]
-    elif system == "Linux":
-        candidates = [
-            "/usr/bin/google-chrome",
-            "/usr/bin/google-chrome-stable",
-            "/usr/bin/chromium-browser"
-        ]
-    else:
-        candidates = []
-    for candidate in candidates:
-        if os.path.exists(candidate):
-            return candidate
-    raise RuntimeError(
-        "Não foi possível encontrar o executável do Chrome/Chromium. "
-        "Instala o browser ou define CHROME_BINARY na ENV."
-    )
 
 def aceitar_cookies_se_existem(driver):
     time.sleep(3)
@@ -60,36 +21,28 @@ def aceitar_cookies_se_existem(driver):
         pass
 
 def clicar_noticias_tab(driver):
-    wait = WebDriverWait(driver, 15)
     try:
-        noticias_tab = wait.until(
+        noticias_tab = WebDriverWait(driver, 10).until(
             EC.element_to_be_clickable((By.XPATH, "//a[contains(@href, 'tbm=nws')]"))
         )
-        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", noticias_tab)
         noticias_tab.click()
         time.sleep(2)
         return True
-    except Exception as e:
-        print(f"[ERRO clicar_noticias_tab]: {e}")
+    except:
         return False
 
 def aplicar_filtro_tempo(driver, filtro_tempo):
-    wait = WebDriverWait(driver, 15)
     try:
-        ferramentas_btn = wait.until(
+        WebDriverWait(driver, 10).until(
             EC.element_to_be_clickable((By.XPATH, "//div[text()='Ferramentas']"))
-        )
-        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", ferramentas_btn)
-        ferramentas_btn.click()
+        ).click()
         time.sleep(1.5)
-        recentes_btn = wait.until(
+        WebDriverWait(driver, 10).until(
             EC.element_to_be_clickable((By.XPATH, "//div[text()='Recentes']"))
-        )
-        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", recentes_btn)
-        recentes_btn.click()
+        ).click()
         time.sleep(1.5)
 
-        menu_itens = wait.until(
+        menu_itens = WebDriverWait(driver, 10).until(
             EC.presence_of_all_elements_located((By.XPATH, "//a[@role='menuitemradio']"))
         )
 
@@ -105,19 +58,16 @@ def aplicar_filtro_tempo(driver, filtro_tempo):
         print(f"[ERRO filtro]: {e}")
 
 def clicar_linguagem(driver):
-    wait = WebDriverWait(driver, 15)
     try:
-        pesquisar_div = wait.until(
+        pesquisar_div = WebDriverWait(driver, 10).until(
             EC.element_to_be_clickable((By.XPATH, "//div[contains(@class, 'KTBKoe') and contains(text(), 'Pesquisar na Web')]"))
         )
-        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", pesquisar_div)
         pesquisar_div.click()
         time.sleep(1.5)
 
-        link_pt = wait.until(
+        link_pt = WebDriverWait(driver, 10).until(
             EC.element_to_be_clickable((By.XPATH, "//a[contains(text(), 'Pesquisar páginas em Português')]"))
         )
-        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", link_pt)
         link_pt.click()
         time.sleep(1.5)
 
@@ -125,9 +75,8 @@ def clicar_linguagem(driver):
         print(f"[ERRO clicar_linguagem]: {e}")
 
 def coletar_links_noticias(driver):
-    wait = WebDriverWait(driver, 15)
     try:
-        blocos = wait.until(
+        blocos = WebDriverWait(driver, 10).until(
             EC.presence_of_all_elements_located((By.XPATH, "//div[@role='heading' and contains(@class,'n0jPhd')]"))
         )
         links = []
@@ -165,12 +114,9 @@ def coletar_links_noticias(driver):
         return []
 
 def visitar_links(driver, links, keyword, resultados):
-    wait = WebDriverWait(driver, 15)
     for url, data_pub in links:
         try:
-            link_element = wait.until(
-                EC.element_to_be_clickable((By.XPATH, f"//a[@href='{url}']"))
-            )
+            link_element = driver.find_element(By.XPATH, f"//a[@href='{url}']")
             driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", link_element)
             time.sleep(1)
             link_element.click()
@@ -186,8 +132,7 @@ def visitar_links(driver, links, keyword, resultados):
             ]
             for xpath in possiveis_botoes:
                 try:
-                    btn = wait.until(EC.element_to_be_clickable((By.XPATH, xpath)))
-                    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn)
+                    btn = WebDriverWait(driver, 3).until(EC.element_to_be_clickable((By.XPATH, xpath)))
                     btn.click()
                     break
                 except:
@@ -242,13 +187,10 @@ def visitar_links(driver, links, keyword, resultados):
                 continue
 
 def proxima_pagina(driver):
-    wait = WebDriverWait(driver, 15)
     try:
-        btn = wait.until(
+        WebDriverWait(driver, 5).until(
             EC.element_to_be_clickable((By.ID, "pnnext"))
-        )
-        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn)
-        btn.click()
+        ).click()
         time.sleep(3)
         return True
     except:
@@ -256,41 +198,30 @@ def proxima_pagina(driver):
 
 def executar_scraper_google(keyword, filtro_tempo):
     options = uc.ChromeOptions()
-   
-    options.add_argument('--headless=new')  # Comenta esta linha para ver o browser
-    options.add_argument('--no-sandbox')
-    options.add_argument('--disable-dev-shm-usage')
-    options.add_argument('--disable-gpu')
-    options.add_argument('--disable-blink-features=AutomationControlled')
-    options.add_argument('--disable-software-rasterizer')
-    options.add_argument('--disable-setuid-sandbox')
-    options.add_argument('--disable-extensions')
-    options.add_argument('--disable-infobars')
-    options.add_argument('--window-size=1920,1080')
-
-    chrome_path = get_chrome_path()
-    driver = uc.Chrome(options=options, browser_executable_path=chrome_path)
-
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    # Para forçar uso de Chromium do uc, não passes browser_executable_path
+    # Para forçar uma versão específica (opcional): version_main=137
+    driver = uc.Chrome(options=options, version_main=137)
     resultados = []
-    wait = WebDriverWait(driver, 15)
     try:
         driver.get("https://www.google.com")
         aceitar_cookies_se_existem(driver)
-        search_input = wait.until(
+
+        search_input = WebDriverWait(driver, 10).until(
             EC.element_to_be_clickable((By.NAME, "q"))
         )
-        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", search_input)
-        search_input.clear()
-        time.sleep(1)
+        time.sleep(2)
         for letra in keyword:
             search_input.send_keys(letra)
             time.sleep(0.25)
         search_input.send_keys(Keys.ENTER)
         time.sleep(3)
+
         if clicar_noticias_tab(driver):
             aplicar_filtro_tempo(driver, filtro_tempo)
             clicar_linguagem(driver)
-            wait.until(
+            WebDriverWait(driver, 10).until(
                 EC.presence_of_element_located((By.XPATH, "//div[@role='heading']"))
             )
             while True:
