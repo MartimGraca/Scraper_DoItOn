@@ -6,8 +6,14 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import re
-import os
 import platform
+import os
+import subprocess
+
+print("CHROME_BINARY ENV:", os.getenv("CHROME_BINARY"))
+print("Conteúdo de /usr/bin:")
+print(subprocess.getoutput("ls -l /usr/bin | grep chrome"))
+
 
 def get_chrome_path():
     chrome_path = os.getenv("CHROME_BINARY")
