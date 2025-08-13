@@ -83,7 +83,7 @@ trio
 trio-websocket
 typing_extensions
 tzdata
-undetected-chromedriver
+undetected-chromedriver==3.5.3
 urllib3
 watchdog
 websocket-client

@@ -9,10 +9,18 @@ import re
 import os
 import platform
 
+from dotenv import load_dotenv
+load_dotenv()  
+
+
 def get_chrome_path():
     chrome_path = os.getenv("CHROME_BINARY")
     if chrome_path:
-        return chrome_path  # Confia na ENV, mesmo em Docker!
+        if os.path.exists(chrome_path):
+            return chrome_path
+        else:
+            raise RuntimeError(f"CHROME_BINARY definido no .env mas o caminho não existe: {chrome_path}")
+  
     system = platform.system()
     if system == "Windows":
         candidates = [
@@ -226,7 +234,7 @@ def proxima_pagina(driver):
 
 def executar_scraper_google(keyword, filtro_tempo):
     options = uc.ChromeOptions()
-    options.add_argument('--headless=new')
+    options.add_argument('--headless')
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
     options.add_argument('--disable-gpu')
