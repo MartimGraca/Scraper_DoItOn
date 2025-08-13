@@ -9,17 +9,13 @@ import re
 import os
 import platform
 
-from dotenv import load_dotenv
-load_dotenv()  
-
-
 def get_chrome_path():
     chrome_path = os.getenv("CHROME_BINARY")
     if chrome_path:
         if os.path.exists(chrome_path):
             return chrome_path
         else:
-            raise RuntimeError(f"CHROME_BINARY definido no .env mas o caminho não existe: {chrome_path}")
+            raise RuntimeError(f"CHROME_BINARY definido na ENV mas o caminho não existe: {chrome_path}")
   
     system = platform.system()
     if system == "Windows":
@@ -34,6 +30,7 @@ def get_chrome_path():
     elif system == "Linux":
         candidates = [
             "/usr/bin/google-chrome",
+            "/usr/bin/google-chrome-stable",
             "/usr/bin/chromium-browser"
         ]
     else:
@@ -43,7 +40,7 @@ def get_chrome_path():
             return candidate
     raise RuntimeError(
         "Não foi possível encontrar o executável do Chrome/Chromium. "
-        "Instala o browser ou define CHROME_BINARY no teu .env."
+        "Instala o browser ou define CHROME_BINARY na ENV."
     )
 
 def aceitar_cookies_se_existem(driver):
@@ -234,7 +231,7 @@ def proxima_pagina(driver):
 
 def executar_scraper_google(keyword, filtro_tempo):
     options = uc.ChromeOptions()
-    options.add_argument('--headless')
+    options.add_argument('--headless=new')
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
     options.add_argument('--disable-gpu')
