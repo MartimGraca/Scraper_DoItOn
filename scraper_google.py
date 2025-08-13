@@ -10,28 +10,24 @@ import os
 import platform
 
 def get_chrome_path():
-    # Primeiro tenta o .env
     chrome_path = os.getenv("CHROME_BINARY")
     if chrome_path and os.path.exists(chrome_path):
         return chrome_path
 
-    # Deteta o sistema operativo
     system = platform.system()
-    candidates = []
     if system == "Windows":
         candidates = [
             r"C:\Program Files\Google\Chrome\Application\chrome.exe",
             r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"
         ]
-    elif system == "Darwin":  # MacOS
+    elif system == "Darwin":
         candidates = [
             "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
         ]
     elif system == "Linux":
         candidates = [
             "/usr/bin/google-chrome",
-            "/usr/bin/chromium-browser",
-            "/usr/bin/chrome"
+            "/usr/bin/chromium-browser"
         ]
     else:
         candidates = []

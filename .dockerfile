@@ -1,6 +1,5 @@
 FROM python:3.10-slim
 
-# Instala dependências para Chrome
 RUN apt-get update && \
     apt-get install -y wget gnupg2 && \
     wget -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - && \
