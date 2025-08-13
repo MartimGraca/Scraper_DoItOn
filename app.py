@@ -362,109 +362,108 @@ if menu == "Scraper" and role_name in ["admin", "account"]:
 
     # ---------- GOOGLE NEWS ----------
     elif modo_scraper == "Google Notícias":
-        st.subheader("🔍 Pesquisa no Google Notícias")
-        keyword = st.text_input("Insira palavras-chave separadas por vírgula:", value=keywords_atuais)
-        filtro_tempo = st.selectbox("Filtrar por período de tempo:", ["Na última hora", "Últimas 24 horas", "Última semana", "Último mês", "Último ano"])
+     st.subheader("🔍 Pesquisa no Google Notícias")
+    keyword = st.text_input("Insira palavras-chave separadas por vírgula:", value=keywords_atuais)
+    filtro_tempo = st.selectbox("Filtrar por período de tempo:", ["Na última hora", "Últimas 24 horas", "Última semana", "Último mês", "Último ano"])
 
-        if st.button("🔎 Pesquisar"):
-            if not cliente_id:
-                st.warning("Por favor, selecione ou crie um cliente antes de continuar.")
-            else:
-                keywords = [kw.strip() for kw in keyword.split(",") if kw.strip()]
-                st.session_state["resultados_scraper"] = []
+    if st.button("🔎 Pesquisar"):
+        if not cliente_id:
+            st.warning("Por favor, selecione ou crie um cliente antes de continuar.")
+        else:
+            keywords = [kw.strip() for kw in keyword.split(",") if kw.strip()]
+            st.session_state["resultados_scraper"] = []
 
-                for kw in keywords:
-                    with st.spinner(f"A recolher dados para {kw} ☕"):
-                        try:
-                            resultados_kw = executar_scraper_google(kw, filtro_tempo)
-                            st.session_state["resultados_scraper"].append({
-                                "keyword": kw,
-                                "resultados": resultados_kw
-                            })
-                            st.success(f"✅ {len(resultados_kw)} resultados encontrados para: '{kw}'")
-                        except Exception as e:
-                            st.error(f"❌ Erro ao processar keyword '{kw}': {e}")
-                        
-                        
+            for kw in keywords:
+                with st.spinner(f"A recolher dados para {kw} ☕"):
+                    try:
+                        resultados_kw = executar_scraper_google(kw, filtro_tempo)
+                        st.session_state["resultados_scraper"].append({
+                            "keyword": kw,
+                            "resultados": resultados_kw
+                        })
+                        st.success(f"✅ {len(resultados_kw)} resultados encontrados para: '{kw}'")
+                    except Exception as e:
+                        st.error(f"❌ Erro ao processar keyword '{kw}': {e}")
 
-                for grupo in st.session_state["resultados_scraper"]:
-                  kw = grupo["keyword"]
-                  resultados_kw = grupo["resultados"]
+    # Mostra resultados, mesmo após o clique no botão
+    for grupo in st.session_state.get("resultados_scraper", []):
+        kw = grupo["keyword"]
+        resultados_kw = grupo["resultados"]
 
-    st.subheader(f"📑 Resultados do Google para : {kw}")
-    if not isinstance(resultados_kw, list):
-        st.error("❌ O scraper não devolveu resultados válidos para esta keyword.")
-        resultados_kw = []
+        st.subheader(f"📑 Resultados do Google para : {kw}")
+        if not isinstance(resultados_kw, list):
+            st.error("❌ O scraper não devolveu resultados válidos para esta keyword.")
+            resultados_kw = []
 
-    for i, resultado in enumerate(resultados_kw):
-                link = resultado["link"]
-                site_name = resultado.get("site", "Desconhecido")
-                titulo = resultado.get("titulo", "Sem título")
-                data_pub = resultado.get("data", "N/D")
+        for i, resultado in enumerate(resultados_kw):
+            link = resultado.get("link", "")
+            site_name = resultado.get("site", "Desconhecido")
+            titulo = resultado.get("titulo", "Sem título")
+            data_pub = resultado.get("data", "N/D")
 
-                with st.expander(f"Notícia {i + 1}"):
-                    st.markdown(f"**Título:** {titulo}")
-                    st.markdown(f"**Nome do Site:** {site_name}")
-                    st.markdown(f"**🕒 Data de Publicação:** {data_pub}")
-                    st.markdown(f"[🌐 Abrir Link]({link})", unsafe_allow_html=True)
+            with st.expander(f"Notícia {i + 1}"):
+                st.markdown(f"**Título:** {titulo}")
+                st.markdown(f"**Nome do Site:** {site_name}")
+                st.markdown(f"**🕒 Data de Publicação:** {data_pub}")
+                st.markdown(f"[🌐 Abrir Link]({link})", unsafe_allow_html=True)
 
-                    nome_sugerido = extrair_nome_midia(site_name, titulo)
-                    nome = st.text_input("📝 Nome da Media", nome_sugerido, key=f"{kw}_nome_{i}")
-                    tipologia = st.selectbox("📺 Tipologia", ["Online", "TV", "Rádio", "Imprensa"], key=f"{kw}_tipo_{i}")
-                    segmento = st.selectbox("🏷️ Segmento", ["Tecnologia", "Político", "Saúde", "Outro"], key=f"{kw}_seg_{i}")
-                    tier_automatico = obter_tier_por_nome(nome)
-                    tier_default = tier_automatico if tier_automatico else 4
+                nome_sugerido = extrair_nome_midia(site_name, titulo)
+                nome = st.text_input("📝 Nome da Media", nome_sugerido, key=f"{kw}_nome_{i}")
+                tipologia = st.selectbox("📺 Tipologia", ["Online", "TV", "Rádio", "Imprensa"], key=f"{kw}_tipo_{i}")
+                segmento = st.selectbox("🏷️ Segmento", ["Tecnologia", "Político", "Saúde", "Outro"], key=f"{kw}_seg_{i}")
+                tier_automatico = obter_tier_por_nome(nome)
+                tier_default = tier_automatico if tier_automatico else 4
 
-                    tier = st.selectbox("⭐ Tier", [1, 2, 3, 4], index=tier_default - 1, key=f"dir_tier_{i}")
+                tier = st.selectbox("⭐ Tier", [1, 2, 3, 4], index=tier_default - 1, key=f"dir_tier_{i}")
 
-                    if st.button("💾 Guardar", key=f"dir_guardar_{i}"):
-                        existente = media_existe(nome, cliente_id)
+                if st.button("💾 Guardar", key=f"dir_guardar_{i}"):
+                    existente = media_existe(nome, cliente_id)
 
-                        # Guarda valores no session_state
-                        st.session_state[f"dir_pending_nome_{i}"] = nome
-                        st.session_state[f"dir_pending_tipologia_{i}"] = tipologia
-                        st.session_state[f"dir_pending_segmento_{i}"] = segmento
-                        st.session_state[f"dir_pending_tier_{i}"] = tier
-                        st.session_state[f"dir_pending_link_{i}"] = link
-                        st.session_state[f"dir_pending_id_{i}"] = existente[0] if existente else None
+                    # Guarda valores no session_state
+                    st.session_state[f"dir_pending_nome_{i}"] = nome
+                    st.session_state[f"dir_pending_tipologia_{i}"] = tipologia
+                    st.session_state[f"dir_pending_segmento_{i}"] = segmento
+                    st.session_state[f"dir_pending_tier_{i}"] = tier
+                    st.session_state[f"dir_pending_link_{i}"] = link
+                    st.session_state[f"dir_pending_id_{i}"] = existente[0] if existente else None
 
-                        if existente:
-                            st.warning("⚠️ Já existe uma media com este nome para esta empresa.")
-                            col1, col2 = st.columns(2)
+                    if existente:
+                        st.warning("⚠️ Já existe uma media com este nome para esta empresa.")
+                        col1, col2 = st.columns(2)
 
-                            with col1:
-                                st.markdown("#### 📄 Media Existente")
-                                st.write(f"**Nome:** {existente[1]}")
-                                st.write(f"**URL:** {existente[2]}")
-                                st.write(f"**Tipologia:** {existente[3]}")
-                                st.write(f"**Segmento:** {existente[4]}")
-                                st.write(f"**Tier:** {existente[5]}")
+                        with col1:
+                            st.markdown("#### 📄 Media Existente")
+                            st.write(f"**Nome:** {existente[1]}")
+                            st.write(f"**URL:** {existente[2]}")
+                            st.write(f"**Tipologia:** {existente[3]}")
+                            st.write(f"**Segmento:** {existente[4]}")
+                            st.write(f"**Tier:** {existente[5]}")
 
-                            with col2:
-                                st.markdown("#### ✍️ Nova Media")
-                                st.write(f"**Nome:** {nome}")
-                                st.write(f"**URL:** {link}")
-                                st.write(f"**Tipologia:** {tipologia}")
-                                st.write(f"**Segmento:** {segmento}")
-                                st.write(f"**Tier:** {tier}")
+                        with col2:
+                            st.markdown("#### ✍️ Nova Media")
+                            st.write(f"**Nome:** {nome}")
+                            st.write(f"**URL:** {link}")
+                            st.write(f"**Tipologia:** {tipologia}")
+                            st.write(f"**Segmento:** {segmento}")
+                            st.write(f"**Tier:** {tier}")
 
-                            if st.button("✅ Confirmar e Substituir", key=f"dir_confirma_{i}"):
-                                update_media(
-                                    media_id=st.session_state[f"dir_pending_id_{i}"],
-                                    nome=st.session_state[f"dir_pending_nome_{i}"],
-                                    url=st.session_state[f"dir_pending_link_{i}"],
-                                    tipologia=st.session_state[f"dir_pending_tipologia_{i}"],
-                                    segmento=st.session_state[f"dir_pending_segmento_{i}"],
-                                    tier=st.session_state[f"dir_pending_tier_{i}"]
-                                )
-                                st.success("Media atualizada com sucesso!")
-                                st.rerun()
-                            elif st.button("❌ Cancelar", key=f"dir_cancelar_{i}"):
-                                st.info("Cancelado.")
-                        else:
-                            insert_media(nome, link, cliente_id, tipologia, segmento, tier)
-                            st.success("Guardado com sucesso!")
+                        if st.button("✅ Confirmar e Substituir", key=f"dir_confirma_{i}"):
+                            update_media(
+                                media_id=st.session_state[f"dir_pending_id_{i}"],
+                                nome=st.session_state[f"dir_pending_nome_{i}"],
+                                url=st.session_state[f"dir_pending_link_{i}"],
+                                tipologia=st.session_state[f"dir_pending_tipologia_{i}"],
+                                segmento=st.session_state[f"dir_pending_segmento_{i}"],
+                                tier=st.session_state[f"dir_pending_tier_{i}"]
+                            )
+                            st.success("Media atualizada com sucesso!")
                             st.rerun()
+                        elif st.button("❌ Cancelar", key=f"dir_cancelar_{i}"):
+                            st.info("Cancelado.")
+                    else:
+                        insert_media(nome, link, cliente_id, tipologia, segmento, tier)
+                        st.success("Guardado com sucesso!")
+                        st.rerun()
 
 
 
