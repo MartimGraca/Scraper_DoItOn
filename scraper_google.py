@@ -5,9 +5,45 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-import undetected_chromedriver as uc
 import re
 import os
+import platform
+
+def get_chrome_path():
+    # Primeiro tenta o .env
+    chrome_path = os.getenv("CHROME_BINARY")
+    if chrome_path and os.path.exists(chrome_path):
+        return chrome_path
+
+    # Deteta o sistema operativo
+    system = platform.system()
+    candidates = []
+    if system == "Windows":
+        candidates = [
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"
+        ]
+    elif system == "Darwin":  # MacOS
+        candidates = [
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        ]
+    elif system == "Linux":
+        candidates = [
+            "/usr/bin/google-chrome",
+            "/usr/bin/chromium-browser",
+            "/usr/bin/chrome"
+        ]
+    else:
+        candidates = []
+
+    for candidate in candidates:
+        if os.path.exists(candidate):
+            return candidate
+
+    raise RuntimeError(
+        "Não foi possível encontrar o executável do Chrome/Chromium. "
+        "Instala o browser ou define CHROME_BINARY no teu .env."
+    )
 
 def aceitar_cookies_se_existem(driver):
     time.sleep(3)
@@ -204,13 +240,9 @@ def executar_scraper_google(keyword, filtro_tempo):
     # Podes adicionar headless se quiseres (mas testa sem primeiro):
     # options.add_argument("--headless=new")
 
-    chrome_path = os.getenv("CHROME_BINARY", "/usr/bin/google-chrome")
+    chrome_path = get_chrome_path()
     driver = uc.Chrome(options=options, browser_executable_path=chrome_path)
-    if not chrome_path or not isinstance(chrome_path, str) or not chrome_path.strip():
-        raise RuntimeError("CHROME_BINARY não definido ou inválido.")
 
-    # Passa o path explicitamente!
-    driver = uc.Chrome(options=options, browser_executable_path=chrome_path)
     resultados = []
     try:
         driver.get("https://www.google.com")
