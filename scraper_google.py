@@ -9,14 +9,10 @@ import re
 import os
 import platform
 
-import os
-import platform
-
 def get_chrome_path():
     chrome_path = os.getenv("CHROME_BINARY")
     if chrome_path:
-        return chrome_path  # Confia na variável de ambiente!
-
+        return chrome_path  # Confia na ENV, mesmo em Docker!
     system = platform.system()
     if system == "Windows":
         candidates = [
@@ -34,11 +30,9 @@ def get_chrome_path():
         ]
     else:
         candidates = []
-
     for candidate in candidates:
         if os.path.exists(candidate):
             return candidate
-
     raise RuntimeError(
         "Não foi possível encontrar o executável do Chrome/Chromium. "
         "Instala o browser ou define CHROME_BINARY no teu .env."
@@ -231,13 +225,17 @@ def proxima_pagina(driver):
         return False
 
 def executar_scraper_google(keyword, filtro_tempo):
-
     options = uc.ChromeOptions()
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_argument("--disable-dev-shm-usage")
-    # Podes adicionar headless se quiseres (mas testa sem primeiro):
-    # options.add_argument("--headless=new")
+    options.add_argument('--headless=new')
+    options.add_argument('--no-sandbox')
+    options.add_argument('--disable-dev-shm-usage')
+    options.add_argument('--disable-gpu')
+    options.add_argument('--disable-blink-features=AutomationControlled')
+    options.add_argument('--disable-software-rasterizer')
+    options.add_argument('--disable-setuid-sandbox')
+    options.add_argument('--disable-extensions')
+    options.add_argument('--disable-infobars')
+    options.add_argument('--window-size=1920,1080')
 
     chrome_path = get_chrome_path()
     driver = uc.Chrome(options=options, browser_executable_path=chrome_path)
