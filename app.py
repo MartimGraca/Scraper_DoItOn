@@ -764,11 +764,11 @@ elif menu == "Media" and role_name in ["admin", "account"]:
             submit = st.form_submit_button("Salvar")
             if submit:
                 if nome_midia and url_midia and cliente_id:
-                    insert_media(nome_midia, url_midia, cliente_id, tipologia, segmento)
-                    st.success("✅ Media adicionada com sucesso!")
-                    st.rerun()
-                else:
-                    st.error("❌ Preencha todos os campos obrigatórios.")
+                 insert_media(nome_midia, url_midia, cliente_id, tipologia, segmento, tier)
+                 st.success("✅ Media adicionada com sucesso!")
+                 st.rerun()
+            else:
+                 st.error("❌ Preencha todos os campos obrigatórios.")
 
     # Filtros
     st.markdown("<hr><h3 style='color:#4A90E2;'>🔍 Filtros de Pesquisa</h3>", unsafe_allow_html=True)
