@@ -197,7 +197,7 @@ def executar_scraper_google(keyword, filtro_tempo):
     options = uc.ChromeOptions()
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-blink-features=AutomationControlled")
-    #options.add_argument("--headless")  # remove se quiseres ver o navegador
+    options.add_argument("--headless")  
     options.add_argument("--window-size=1280,1024")
     # Se quiseres garantir versão específica, usa version_main=139 (ou tua versão), mas o padrão já funciona bem
     driver = uc.Chrome(options=options)
