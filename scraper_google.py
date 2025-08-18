@@ -197,7 +197,7 @@ def executar_scraper_google(keyword, filtro_tempo):
     options = uc.ChromeOptions()
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_argument("--headless")  # remove se quiseres ver o navegador
+    #options.add_argument("--headless")  # remove se quiseres ver o navegador
     options.add_argument("--window-size=1280,1024")
     # Se quiseres garantir versão específica, usa version_main=139 (ou tua versão), mas o padrão já funciona bem
     driver = uc.Chrome(options=options)
@@ -252,9 +252,7 @@ def rodar_scraper_sequencial(keywords_string, filtro_tempo):
     return all_results
 
 if __name__ == "__main__":
-    # Exemplo de uso:
-    # keywords = "Benfica, Sporting, Porto"
-    # filtro_tempo = "Última hora"
+  
     keywords = input("Palavras-chave separadas por vírgula: ")
     filtro_tempo = input("Filtro de tempo (ex: 'Última hora', 'Últimas 24 horas'): ")
     resultados = rodar_scraper_sequencial(keywords, filtro_tempo)
