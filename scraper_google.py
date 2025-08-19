@@ -284,7 +284,7 @@ def rodar_scraper_sequencial(keywords_string, filtro_tempo):
             })
     return all_results
 
-if _name_ == "_main_":
+if __name__ == "__main__":
     keywords = input("Palavras-chave separadas por vírgula: ")
     filtro_tempo = input("Filtro de tempo (ex: 'Última hora', 'Últimas 24 horas'): ")
     resultados = rodar_scraper_sequencial(keywords, filtro_tempo)
