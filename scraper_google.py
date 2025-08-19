@@ -11,17 +11,19 @@ from selenium.webdriver.support import expected_conditions as EC
 # --- Helper for robust clicking
 def safe_click(driver, element, screenshot_prefix="erro_click"):
     try:
-        # Scroll first
         driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
         time.sleep(0.2)
+        print("displayed:", element.is_displayed(), "enabled:", element.is_enabled())
+        driver.save_screenshot(f"{screenshot_prefix}_{int(time.time())}_antes.png")
         element.click()
     except Exception as e:
         try:
+            print("Falhou click normal, a tentar JS click...")
+            driver.save_screenshot(f"{screenshot_prefix}_{int(time.time())}_js.png")
             driver.execute_script("arguments[0].click();", element)
         except Exception as e2:
-            # Screenshot for debug
-            ts = int(time.time())
-            driver.save_screenshot(f"{screenshot_prefix}_{ts}.png")
+            driver.save_screenshot(f"{screenshot_prefix}_{int(time.time())}_erro.png")
+            print("Erro ao clicar, ver screenshot!")
             raise Exception(f"Safe click falhou: {e} / {e2}")
 
 def aceitar_cookies_se_existem(driver):
