@@ -8,13 +8,19 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
+def safe_click(driver, element):
+    try:
+        element.click()
+    except Exception:
+        driver.execute_script("arguments[0].click();", element)
+
 def aceitar_cookies_se_existem(driver):
     time.sleep(3)
     try:
         aceitar_btn = WebDriverWait(driver, 5).until(
             EC.element_to_be_clickable((By.XPATH, "//button//div[text()='Aceitar tudo']"))
         )
-        aceitar_btn.click()
+        safe_click(driver, aceitar_btn)
     except:
         pass
 
@@ -23,7 +29,7 @@ def clicar_noticias_tab(driver):
         noticias_tab = WebDriverWait(driver, 10).until(
             EC.element_to_be_clickable((By.XPATH, "//a[contains(@href, 'tbm=nws')]"))
         )
-        noticias_tab.click()
+        safe_click(driver, noticias_tab)
         time.sleep(2)
         return True
     except:
@@ -31,13 +37,15 @@ def clicar_noticias_tab(driver):
 
 def aplicar_filtro_tempo(driver, filtro_tempo):
     try:
-        WebDriverWait(driver, 10).until(
+        btn_ferramentas = WebDriverWait(driver, 10).until(
             EC.element_to_be_clickable((By.XPATH, "//div[text()='Ferramentas']"))
-        ).click()
+        )
+        safe_click(driver, btn_ferramentas)
         time.sleep(1.5)
-        WebDriverWait(driver, 10).until(
+        btn_recentes = WebDriverWait(driver, 10).until(
             EC.element_to_be_clickable((By.XPATH, "//div[text()='Recentes']"))
-        ).click()
+        )
+        safe_click(driver, btn_recentes)
         time.sleep(1.5)
 
         menu_itens = WebDriverWait(driver, 10).until(
@@ -48,7 +56,7 @@ def aplicar_filtro_tempo(driver, filtro_tempo):
             if filtro_tempo.strip().lower() in item.text.strip().lower():
                 driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", item)
                 time.sleep(0.5)
-                driver.execute_script("arguments[0].click();", item)
+                safe_click(driver, item)
                 break
 
         time.sleep(3)
@@ -60,13 +68,13 @@ def clicar_linguagem(driver):
         pesquisar_div = WebDriverWait(driver, 10).until(
             EC.element_to_be_clickable((By.XPATH, "//div[contains(@class, 'KTBKoe') and contains(text(), 'Pesquisar na Web')]"))
         )
-        pesquisar_div.click()
+        safe_click(driver, pesquisar_div)
         time.sleep(1.5)
 
         link_pt = WebDriverWait(driver, 10).until(
             EC.element_to_be_clickable((By.XPATH, "//a[contains(text(), 'Pesquisar páginas em Português')]"))
         )
-        link_pt.click()
+        safe_click(driver, link_pt)
         time.sleep(1.5)
     except Exception as e:
         print(f"[ERRO clicar_linguagem]: {e}")
@@ -116,7 +124,7 @@ def visitar_links(driver, links, keyword, resultados):
             link_element = driver.find_element(By.XPATH, f"//a[@href='{url}']")
             driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", link_element)
             time.sleep(1)
-            link_element.click()
+            safe_click(driver, link_element)
             time.sleep(4)
 
             possiveis_botoes = [
@@ -130,7 +138,7 @@ def visitar_links(driver, links, keyword, resultados):
             for xpath in possiveis_botoes:
                 try:
                     btn = WebDriverWait(driver, 3).until(EC.element_to_be_clickable((By.XPATH, xpath)))
-                    btn.click()
+                    safe_click(driver, btn)
                     break
                 except:
                     continue
@@ -185,9 +193,10 @@ def visitar_links(driver, links, keyword, resultados):
 
 def proxima_pagina(driver):
     try:
-        WebDriverWait(driver, 5).until(
+        next_btn = WebDriverWait(driver, 5).until(
             EC.element_to_be_clickable((By.ID, "pnnext"))
-        ).click()
+        )
+        safe_click(driver, next_btn)
         time.sleep(3)
         return True
     except:
@@ -199,7 +208,6 @@ def executar_scraper_google(keyword, filtro_tempo):
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument("--headless")  
     options.add_argument("--window-size=1280,1024")
-    # Se quiseres garantir versão específica, usa version_main=139 (ou tua versão), mas o padrão já funciona bem
     driver = uc.Chrome(options=options)
     resultados = []
     try:
@@ -252,7 +260,6 @@ def rodar_scraper_sequencial(keywords_string, filtro_tempo):
     return all_results
 
 if __name__ == "__main__":
-  
     keywords = input("Palavras-chave separadas por vírgula: ")
     filtro_tempo = input("Filtro de tempo (ex: 'Última hora', 'Últimas 24 horas'): ")
     resultados = rodar_scraper_sequencial(keywords, filtro_tempo)

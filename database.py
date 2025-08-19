@@ -74,7 +74,7 @@ def criar_tabelas():
             conn = get_connection()
             cursor = conn.cursor()
 
-            # Lista de tabelas e suas definições SQL
+            
             tabelas = {
                 "roles": """
                 CREATE TABLE IF NOT EXISTS roles (
