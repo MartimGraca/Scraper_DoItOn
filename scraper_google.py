@@ -46,23 +46,48 @@ def safe_click(driver, element, screenshot_prefix="erro_click"):
             raise Exception(f"Safe click falhou: {e} / {e2}")
 
 def aceitar_cookies_se_existem(driver):
-    print("[DEBUG] A tentar aceitar cookies...")
+    print("[DEBUG] A tentar aceitar cookies (com iframes)...")
     time.sleep(2)
-    textos = ['Aceitar tudo', 'Accept all', 'Aceitar', 'Concordo', 'Accept all']
+    textos = ['Aceitar tudo', 'Accept all', 'Aceitar', 'Concordo', 'Consent', 'Agree', 'OK']
+    # Primeiro tenta fora de iframes
     for texto in textos:
         try:
-            print(f"[DEBUG] A procurar botão: {texto}")
-            btn = WebDriverWait(driver, 3).until(
-                EC.element_to_be_clickable((By.XPATH, f"//button[contains(.,'{texto}')]"))
+            print(f"[DEBUG] A procurar botão fora de iframes: {texto}")
+            btn = WebDriverWait(driver, 2).until(
+                EC.element_to_be_clickable((By.XPATH, f"//button[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '{texto.lower()}')]"))
             )
-            print(f"[DEBUG] Botão encontrado: {texto}")
+            print(f"[DEBUG] Botão encontrado fora de iframe: {texto}")
             safe_click(driver, btn, screenshot_prefix="aceitar_cookies")
             time.sleep(1)
             return
         except Exception as e:
-            print(f"[DEBUG] Não encontrou botão '{texto}' ou não está clicável: {e}")
+            print(f"[DEBUG] Não encontrou botão '{texto}' fora de iframe: {e}")
             continue
-    print("[DEBUG] Nenhum botão de cookies encontrado.")
+    
+    iframes = driver.find_elements(By.TAG_NAME, "iframe")
+    print(f"[DEBUG] {len(iframes)} iframes encontrados.")
+    for iframe in iframes:
+        try:
+            driver.switch_to.frame(iframe)
+            for texto in textos:
+                try:
+                    print(f"[DEBUG] A procurar botão '{texto}' dentro de um iframe...")
+                    btn = WebDriverWait(driver, 2).until(
+                        EC.element_to_be_clickable((By.XPATH, f"//button[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '{texto.lower()}')]"))
+                    )
+                    print(f"[DEBUG] Botão encontrado em iframe: {texto}")
+                    safe_click(driver, btn, screenshot_prefix="aceitar_cookies_iframe")
+                    time.sleep(1)
+                    driver.switch_to.default_content()
+                    return
+                except Exception as e:
+                    continue
+            driver.switch_to.default_content()
+        except Exception as e:
+            print(f"[DEBUG] Erro ao procurar em iframe: {e}")
+            driver.switch_to.default_content()
+    print("[DEBUG] Nenhum botão de cookies encontrado (mesmo com iframes).")
+    driver.switch_to.default_content()
 
 def clicar_noticias_tab(driver):
     print("[DEBUG] A tentar clicar no separador Notícias...")
