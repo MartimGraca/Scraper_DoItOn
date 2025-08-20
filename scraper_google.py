@@ -16,7 +16,8 @@ from selenium.common.exceptions import (
     TimeoutException,
 )
 
-# NOTE: This version runs with a visible browser window (NO headless flags).
+# HEADLESS = True -> browser invisível; False -> para debug visual
+HEADLESS = True
 SCREENSHOT_DIR = "fotos_erros"
 
 def ensure_screenshot_dir():
@@ -32,8 +33,7 @@ def save_shot(driver, name):
     print(f"[DEBUG] Screenshot guardada: {path}")
 
 def try_click_strategies(driver, element, prefix="click"):
-    """Tenta várias estratégias de click até uma funcionar.
-    Lança exceção se nenhuma resultar."""
+    """Tenta várias estratégias de click até uma funcionar."""
     ensure_screenshot_dir()
     ts = int(time.time())
     # 1) Scroll to element
@@ -91,7 +91,7 @@ def try_click_strategies(driver, element, prefix="click"):
     except Exception as e:
         print(f"[DEBUG] elementFromPoint click falhou: {e}")
 
-    # 6) Click por className (segundo exemplo do blog)
+    # 6) Click por className (JS)
     try:
         class_name = element.get_attribute("class")
         if class_name:
@@ -114,7 +114,6 @@ def try_click_strategies(driver, element, prefix="click"):
         overlays.forEach(function(o){ try{o.style.display='none'; o.remove();}catch(e){} });
         """)
         time.sleep(0.3)
-        # tenta JS click depois de remover overlays
         try:
             driver.execute_script("arguments[0].click();", element)
             save_shot(driver, f"{prefix}_after_removeoverlays_{ts}.png")
@@ -141,10 +140,8 @@ def try_click_strategies(driver, element, prefix="click"):
     raise Exception("Nenhuma estratégia de click funcionou para o elemento.")
 
 def localizar_botao_por_textos(driver, textos):
-    """Procura botões que contenham qualquer dos textos fornecidos.
-    Retorna primeiro elemento encontrado ou None."""
+    """Procura botões que contenham qualquer dos textos fornecidos."""
     for texto in textos:
-        # XPath que procura botão, input ou span com texto parcial (case-insensitive via translate)
         xpath_variants = [
             f"//button[contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '{texto.lower()}')]",
             f"//div[contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '{texto.lower()}')]",
@@ -156,7 +153,6 @@ def localizar_botao_por_textos(driver, textos):
             try:
                 elems = driver.find_elements(By.XPATH, xp)
                 if elems:
-                    # Escolhe o primeiro visível
                     for e in elems:
                         try:
                             if e.is_displayed():
@@ -189,7 +185,7 @@ def aceitar_cookies_se_existem(driver, screenshot_prefix="cookies"):
     except Exception as e:
         print(f"[DEBUG] Erro a procurar fora iframe: {e}")
 
-    # 2) Tenta dentro de iframes (esperar e iterar)
+    # 2) Tenta dentro de iframes
     try:
         iframes = driver.find_elements(By.TAG_NAME, "iframe")
         print(f"[DEBUG] {len(iframes)} iframes encontrados.")
@@ -216,7 +212,7 @@ def aceitar_cookies_se_existem(driver, screenshot_prefix="cookies"):
         print(f"[DEBUG] Erro ao enumerar iframes: {e}")
         driver.switch_to.default_content()
 
-    # 3) Tenta comandos JS genéricos para clicar em elementos de consentimento conhecidos
+    # 3) JS candidates genéricos
     try:
         js_candidates = [
             "document.querySelector('button[aria-label=\"Accept all\"]')",
@@ -239,7 +235,7 @@ def aceitar_cookies_se_existem(driver, screenshot_prefix="cookies"):
     except Exception as e:
         print(f"[DEBUG] Erro nas tentativas JS genéricas: {e}")
 
-    # 4) Tenta forçar clique no centro da janela (por exemplo quando há overlays deslocadas)
+    # 4) Forçar clique por scan global
     try:
         js_force = """
         var buttons = Array.from(document.querySelectorAll('button, a, span, input[type=button]'));
@@ -270,7 +266,7 @@ def aceitar_cookies_se_existem(driver, screenshot_prefix="cookies"):
     print("[DEBUG] Nenhum botão de cookies conseguido clicar.")
     return False
 
-# As restantes funções do scraper:
+# Resto do scraper (funções para pesquisar, coletar e visitar links)
 def clicar_noticias_tab(driver):
     print("[DEBUG] A tentar clicar no separador Notícias...")
     try:
@@ -364,7 +360,6 @@ def coletar_links_noticias(driver):
                 domain = parsed.netloc.lower()
                 if ".br" in domain:
                     continue
-                # tenta extrair data
                 data_text = "N/D"
                 try:
                     data_parent = bloco.find_element(By.XPATH, "./../../..")
@@ -469,14 +464,17 @@ def executar_scraper_google(keyword, filtro_tempo):
     options = uc.ChromeOptions()
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-blink-features=AutomationControlled")
-    # NO headless flags - browser will be visible for debugging
+    # definir headless via add_argument (nunca usar options.headless = ...)
+    if HEADLESS:
+        options.add_argument("--headless=new")
+        # opcional para windows/linux em algumas versões
+        options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1280,1024")
     driver = uc.Chrome(options=options)
     driver.set_window_size(1280, 1024)
     resultados = []
     try:
         driver.get("https://www.google.com")
-        # esperar um pouco para carregar consent etc
         time.sleep(1.2)
         aceitar_cookies_se_existem(driver, screenshot_prefix="google_cookies")
         # pesquisa
