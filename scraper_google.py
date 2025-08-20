@@ -306,32 +306,49 @@ def executar_scraper_google(keyword, filtro_tempo):
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument("--headless=new")
     options.add_argument("--window-size=1280,1024")
+    # Opcional: força um user-agent de desktop comum
+    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36")
     driver = uc.Chrome(options=options)
     driver.set_window_size(1280, 1024)
     resultados = []
     try:
         print("[DEBUG] A abrir o Google...")
         driver.get("https://www.google.com")
-        driver.save_screenshot(f"antes_cookies_{int(time.time())}.png")
-        aceitar_cookies_se_existem(driver)
-        driver.save_screenshot(f"apos_cookies_{int(time.time())}.png")
+        time.sleep(4)  # Espera mais tempo para overlays sumirem
 
-        print(f"[DEBUG] A procurar campo de pesquisa...")
-        driver.save_screenshot(f"antes_pesquisa_{int(time.time())}.png")
-        search_input = WebDriverWait(driver, 10).until(
-            EC.element_to_be_clickable((By.NAME, "q"))
-        )
-        print("[DEBUG] search_input.is_displayed():", search_input.is_displayed())
-        print("[DEBUG] search_input.is_enabled():", search_input.is_enabled())
-        print("[DEBUG] search_input.location:", search_input.location)
-        print("[DEBUG] search_input.size:", search_input.size)
+        driver.save_screenshot(f"debug_google_{int(time.time())}.png")
+
+        # Alternativa: tenta todos os inputs visíveis e enabled
+        inputs = driver.find_elements(By.TAG_NAME, "input")
+        for i, inp in enumerate(inputs):
+            print(f"[DEBUG] input[{i}] name={inp.get_attribute('name')} is_displayed={inp.is_displayed()} is_enabled={inp.is_enabled()}")
+            driver.save_screenshot(f"input_{i}_{int(time.time())}.png")
+
+        # Tenta encontrar o primeiro input visível e enabled
+        search_input = None
+        for inp in inputs:
+            if inp.is_displayed() and inp.is_enabled():
+                search_input = inp
+                print(f"[DEBUG] input usado: name={inp.get_attribute('name')}")
+                break
+
+        if not search_input:
+            print("❌ Nenhum campo de pesquisa está interagível!")
+            driver.save_screenshot(f"erro_campo_{int(time.time())}.png")
+            return []
+
+        # Extra debug do input selecionado
+        print("[DEBUG] search_input.tag_name", search_input.tag_name)
+        print("[DEBUG] search_input.get_attribute('outerHTML')", search_input.get_attribute('outerHTML'))
+
         driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", search_input)
         time.sleep(0.2)
+        driver.execute_script("arguments[0].focus();", search_input)
         try:
             search_input.click()
-            print("[DEBUG] Cliquei no campo de pesquisa.")
+            print("[DEBUG] Cliquei no campo de pesquisa alternativo.")
         except Exception as e:
-            print("[DEBUG] Erro ao clicar no campo:", e)
+            print("[DEBUG] Erro click alternativo:", e)
 
         print(f"[DEBUG] A escrever pesquisa: {keyword}")
         for letra in keyword:
