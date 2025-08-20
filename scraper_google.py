@@ -42,7 +42,7 @@ def safe_click(driver, element, screenshot_prefix="erro_click"):
         except Exception as e:
             print(f"[DEBUG] Falhou click via JS: {e}")
 
-        # Tenta clicar por classname (como no exemplo do blog)
+        # Tenta clicar por classname
         try:
             class_name = element.get_attribute("class")
             if class_name:
