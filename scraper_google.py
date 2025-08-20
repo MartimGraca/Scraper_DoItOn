@@ -1,17 +1,22 @@
 import os
-print("[DEBUG] INÍCIO DO SCRIPT")
-print("[DEBUG] Working dir:", os.getcwd())
-print("[DEBUG] Ficheiros atuais:", os.listdir("."))
-
 import time
 import re
 from urllib.parse import urlparse
-
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+
+# Diretório de screenshots (ajusta para o teu utilizador se necessário)
+PASTA_SCREENSHOTS = r"C:\Users\marti\OneDrive\Ambiente de Trabalho\fotos erros"
+os.makedirs(PASTA_SCREENSHOTS, exist_ok=True)
+
+def save_debug_screenshot(driver, prefix="debug_google"):
+    screenshot_nome = os.path.join(PASTA_SCREENSHOTS, f"{prefix}_{int(time.time())}.png")
+    driver.save_screenshot(screenshot_nome)
+    print("[DEBUG] Screenshot guardada em:", screenshot_nome)
+    return screenshot_nome
 
 def safe_click(driver, element, screenshot_prefix="erro_click"):
     try:
@@ -19,30 +24,20 @@ def safe_click(driver, element, screenshot_prefix="erro_click"):
         driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
         time.sleep(0.2)
         print(f"[DEBUG] Displayed: {element.is_displayed()}, Enabled: {element.is_enabled()}")
-        screenshot_nome = f"{screenshot_prefix}_{int(time.time())}_antes.png"
-        driver.save_screenshot(screenshot_nome)
-        print(f"[DEBUG] Screenshot ANTES do click: {screenshot_nome}")
+        save_debug_screenshot(driver, f"{screenshot_prefix}_antes")
         element.click()
-        screenshot_nome = f"{screenshot_prefix}_{int(time.time())}_depois.png"
-        driver.save_screenshot(screenshot_nome)
-        print(f"[DEBUG] Screenshot DEPOIS do click: {screenshot_nome}")
-        print("[DEBUG] Ficheiros após click:", os.listdir("."))
+        save_debug_screenshot(driver, f"{screenshot_prefix}_depois")
+        print("[DEBUG] Ficheiros após click:", os.listdir(PASTA_SCREENSHOTS))
     except Exception as e:
         try:
             print("[DEBUG] Falhou click normal, a tentar JS click...")
-            screenshot_nome = f"{screenshot_prefix}_{int(time.time())}_js_antes.png"
-            driver.save_screenshot(screenshot_nome)
-            print(f"[DEBUG] Screenshot ANTES do JS click: {screenshot_nome}")
+            save_debug_screenshot(driver, f"{screenshot_prefix}_js_antes")
             driver.execute_script("arguments[0].click();", element)
-            screenshot_nome = f"{screenshot_prefix}_{int(time.time())}_js_depois.png"
-            driver.save_screenshot(screenshot_nome)
-            print(f"[DEBUG] Screenshot DEPOIS do JS click: {screenshot_nome}")
-            print("[DEBUG] Ficheiros após JS click:", os.listdir("."))
+            save_debug_screenshot(driver, f"{screenshot_prefix}_js_depois")
+            print("[DEBUG] Ficheiros após JS click:", os.listdir(PASTA_SCREENSHOTS))
         except Exception as e2:
-            screenshot_nome = f"{screenshot_prefix}_{int(time.time())}_erro.png"
-            driver.save_screenshot(screenshot_nome)
-            print(f"[DEBUG] Erro ao clicar, screenshot: {screenshot_nome}")
-            print("[DEBUG] Ficheiros após erro:", os.listdir("."))
+            save_debug_screenshot(driver, f"{screenshot_prefix}_erro")
+            print("[DEBUG] Ficheiros após erro:", os.listdir(PASTA_SCREENSHOTS))
             raise Exception(f"Safe click falhou: {e} / {e2}")
 
 def aceitar_cookies_se_existem(driver):
@@ -98,9 +93,8 @@ def clicar_noticias_tab(driver):
         time.sleep(2)
         return True
     except Exception as e:
-        screenshot_nome = f"erro_noticias_tab_{int(time.time())}.png"
-        driver.save_screenshot(screenshot_nome)
-        print(f"[ERRO clicar_noticias_tab]: {e} (screenshot: {screenshot_nome})")
+        save_debug_screenshot(driver, "erro_noticias_tab")
+        print(f"[ERRO clicar_noticias_tab]: {e}")
         return False
 
 def aplicar_filtro_tempo(driver, filtro_tempo):
@@ -134,9 +128,8 @@ def aplicar_filtro_tempo(driver, filtro_tempo):
 
         time.sleep(2)
     except Exception as e:
-        screenshot_nome = f"erro_filtro_tempo_{int(time.time())}.png"
-        driver.save_screenshot(screenshot_nome)
-        print(f"[ERRO filtro]: {e} (screenshot: {screenshot_nome})")
+        save_debug_screenshot(driver, "erro_filtro_tempo")
+        print(f"[ERRO filtro]: {e}")
 
 def clicar_linguagem(driver):
     print("[DEBUG] A tentar clicar para filtrar por língua...")
@@ -155,9 +148,8 @@ def clicar_linguagem(driver):
         safe_click(driver, link_pt, screenshot_prefix="pesquisar_pt")
         time.sleep(1.0)
     except Exception as e:
-        screenshot_nome = f"erro_linguagem_{int(time.time())}.png"
-        driver.save_screenshot(screenshot_nome)
-        print(f"[ERRO clicar_linguagem]: {e} (screenshot: {screenshot_nome})")
+        save_debug_screenshot(driver, "erro_linguagem")
+        print(f"[ERRO clicar_linguagem]: {e}")
 
 def coletar_links_noticias(driver):
     print("[DEBUG] A recolher links das notícias...")
@@ -197,9 +189,8 @@ def coletar_links_noticias(driver):
         print(f"[DEBUG] {len(links)} links recolhidos.")
         return links
     except Exception as e:
-        screenshot_nome = f"erro_coletar_links_{int(time.time())}.png"
-        driver.save_screenshot(screenshot_nome)
-        print(f"[ERRO coletar_links_noticias]: {e} (screenshot: {screenshot_nome})")
+        save_debug_screenshot(driver, "erro_coletar_links")
+        print(f"[ERRO coletar_links_noticias]: {e}")
         return []
 
 def visitar_links(driver, links, keyword, resultados):
@@ -263,10 +254,8 @@ def visitar_links(driver, links, keyword, resultados):
             time.sleep(2.5)
 
         except Exception as e:
-            ts = int(time.time())
-            screenshot_nome = f"erro_visitar_link_{ts}.png"
-            driver.save_screenshot(screenshot_nome)
-            print(f"[ERRO visitar_links]: {e} (screenshot: {screenshot_nome})")
+            save_debug_screenshot(driver, "erro_visitar_link")
+            print(f"[ERRO visitar_links]: {e}")
             resultados.append({
                 "link": url,
                 "titulo": "Erro",
@@ -292,9 +281,8 @@ def proxima_pagina(driver):
         time.sleep(2.5)
         return True
     except Exception as e:
-        screenshot_nome = f"erro_proxima_pagina_{int(time.time())}.png"
-        driver.save_screenshot(screenshot_nome)
-        print(f"[ERRO proxima_pagina]: {e} (screenshot: {screenshot_nome})")
+        save_debug_screenshot(driver, "erro_proxima_pagina")
+        print(f"[ERRO proxima_pagina]: {e}")
         return False
 
 def executar_scraper_google(keyword, filtro_tempo):
@@ -312,14 +300,14 @@ def executar_scraper_google(keyword, filtro_tempo):
         print("[DEBUG] A abrir o Google...")
         driver.get("https://www.google.com")
         time.sleep(4)
-        driver.save_screenshot(f"debug_google_{int(time.time())}.png")
+        save_debug_screenshot(driver, "debug_google")
         aceitar_cookies_se_existem(driver)
-        driver.save_screenshot(f"apos_cookies_{int(time.time())}.png")
+        save_debug_screenshot(driver, "apos_cookies")
         # Alternativa: tenta todos os inputs visíveis e enabled
         inputs = driver.find_elements(By.TAG_NAME, "input")
         for i, inp in enumerate(inputs):
             print(f"[DEBUG] input[{i}] name={inp.get_attribute('name')} is_displayed={inp.is_displayed()} is_enabled={inp.is_enabled()}")
-            driver.save_screenshot(f"input_{i}_{int(time.time())}.png")
+            save_debug_screenshot(driver, f"input_{i}")
 
         # Tenta encontrar o primeiro input visível e enabled
         search_input = None
@@ -331,7 +319,7 @@ def executar_scraper_google(keyword, filtro_tempo):
 
         if not search_input:
             print("❌ Nenhum campo de pesquisa está interagível!")
-            driver.save_screenshot(f"erro_campo_{int(time.time())}.png")
+            save_debug_screenshot(driver, "erro_campo")
             return []
 
         print("[DEBUG] search_input.is_displayed():", search_input.is_displayed())
@@ -354,7 +342,7 @@ def executar_scraper_google(keyword, filtro_tempo):
             search_input.send_keys(letra)
             time.sleep(0.21)
         search_input.send_keys(Keys.ENTER)
-        driver.save_screenshot(f"apos_pesquisa_{int(time.time())}.png")
+        save_debug_screenshot(driver, "apos_pesquisa")
         time.sleep(2.5)
 
         if clicar_noticias_tab(driver):
@@ -399,10 +387,13 @@ def rodar_scraper_sequencial(keywords_string, filtro_tempo):
 
 if __name__ == "__main__":
     print("[DEBUG] Script iniciado.")
+    print("[DEBUG] Working dir:", os.getcwd())
+    print("[DEBUG] Ficheiros atuais:", os.listdir("."))
+    print("[DEBUG] Screenshot dir:", PASTA_SCREENSHOTS)
     keywords = input("Palavras-chave separadas por vírgula: ")
     filtro_tempo = input("Filtro de tempo (ex: 'Última hora', 'Últimas 24 horas'): ")
     print("[DEBUG] Antes de rodar o scraper.")
     resultados = rodar_scraper_sequencial(keywords, filtro_tempo)
     print("[DEBUG] Depois de rodar o scraper.")
     print(resultados)
-    print("[DEBUG] Ficheiros finais:", os.listdir("."))
+    print("[DEBUG] Ficheiros finais:", os.listdir(PASTA_SCREENSHOTS))
