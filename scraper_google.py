@@ -16,7 +16,7 @@ HEADLESS = True
 SCREENSHOT_DIR = "fotos_erros"
 LOG_FILE = os.path.join(SCREENSHOT_DIR, "scraper.log")
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
-MAX_PAGES = 5  # limita páginas de resultados
+MAX_PAGES = 5  # limite de páginas de resultados
 
 # -------------------- Utilitários de logging/screenshot --------------------
 def ensure_dirs():
@@ -129,7 +129,7 @@ def try_click_strategies(driver, element, prefix="click"):
             var overlays = document.querySelectorAll(
                 'div[role=dialog], .modal, .overlay, .popup, [aria-hidden="true"], .fc-dialog-container, #onetrust-banner-sdk'
             );
-        overlays.forEach(function(o){ try{ o.style.display='none'; o.remove(); }catch(e){} });
+            overlays.forEach(function(o){ try{ o.style.display='none'; o.remove(); }catch(e){} });
         """)
         time.sleep(0.2)
         driver.execute_script("arguments[0].click();", element)
@@ -151,7 +151,6 @@ def aceitar_cookies_se_existem(driver, screenshot_prefix="cookies"):
             save_shot(driver, f"{screenshot_prefix}_found_out_{int(time.time())}.png")
             if try_click_strategies(driver, btn, prefix=f"{screenshot_prefix}_out"):
                 log("[DEBUG] Cookies aceites (fora iframe).")
-                # fechar residuais com ESC
                 try:
                     driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
                 except Exception:
@@ -205,36 +204,26 @@ def aceitar_cookies_se_existem(driver, screenshot_prefix="cookies"):
         log(f"[ERRO aceitar_cookies]: {e}")
         return False
 
-# -------------------- URL de Pesquisa (evita input) --------------------
+# -------------------- URL de Pesquisa (sem input) --------------------
 def map_time_filter(filtro_tempo: str) -> str:
     if not filtro_tempo:
         return ""
     f = filtro_tempo.strip().lower()
-    # mapeamentos comuns PT
     if "hora" in f:
-        return "h"  # última hora
+        return "h"      # última hora
     if "24" in f or "dia" in f:
-        return "d"  # últimas 24h
+        return "d"      # últimas 24 horas
     if "semana" in f:
         return "w"
     if "mês" in f or "mes" in f:
         return "m"
     if "ano" in f:
         return "y"
-    return ""  # sem filtro
+    return ""
 
 def build_google_news_url(keyword: str, filtro_tempo: str, hl="pt-PT", gl="pt", lr="lang_pt") -> str:
-    # tbm=nws -> separador Notícias
-    # lr=lang_pt -> restringe idioma
-    # hl -> idioma da interface; gl -> geolocalização
-    # tbs=qdr:<code> -> período (h/d/w/m/y)
     q = quote_plus(keyword)
     qdr = map_time_filter(filtro_tempo)
-    tbs_parts = []
-    if qdr:
-        tbs_parts.append(f"qdr:{qdr}")
-    # Muitos layouts respeitam lr=lang_pt direto; manter simples
-    tbs = ",".join(tbs_parts) if tbs_parts else ""
     params = {
         "q": q,
         "tbm": "nws",
@@ -242,8 +231,8 @@ def build_google_news_url(keyword: str, filtro_tempo: str, hl="pt-PT", gl="pt", 
         "gl": gl,
         "lr": lr
     }
-    if tbs:
-        params["tbs"] = tbs
+    if qdr:
+        params["tbs"] = f"qdr:{qdr}"
     return "https://www.google.com/search?" + urlencode(params)
 
 def get_next_results_page_url(driver) -> str | None:
@@ -312,14 +301,12 @@ def visitar_link_em_nova_aba(driver, url, keyword, data_pub, resultados):
         driver.switch_to.window(driver.window_handles[-1])
 
         wait_ready(driver, 15)
-        time.sleep(0.4)
-        # tenta aceitar cookies no site
+        time.sleep(0.3)
         try:
             aceitar_cookies_se_existem(driver, screenshot_prefix="site_cookie")
         except Exception:
             pass
 
-        # recolha conteúdo
         corpo = ""
         try:
             artigos = driver.find_elements(By.TAG_NAME, "article")
@@ -385,8 +372,14 @@ def executar_scraper_google(keyword, filtro_tempo):
 
     resultados = []
     try:
+        # Fixar .com e evitar geo-redirect
+        driver.get("https://www.google.com/ncr")
+        wait_ready(driver, 15)
+        aceitar_cookies_se_existem(driver, screenshot_prefix="google_cookies_ncr")
+
         # Ir diretamente para resultados de Notícias com filtros aplicados
         start_url = build_google_news_url(keyword, filtro_tempo)
+        log(f"[DEBUG] Start URL: {start_url}")
         driver.get(start_url)
         wait_ready(driver, 15)
         aceitar_cookies_se_existem(driver, screenshot_prefix="google_cookies")
@@ -409,7 +402,7 @@ def executar_scraper_google(keyword, filtro_tempo):
 
             driver.get(next_url)
             wait_ready(driver, 15)
-            time.sleep(0.3)
+            time.sleep(0.2)
     finally:
         try:
             driver.quit()
