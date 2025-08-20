@@ -1,9 +1,8 @@
 import os
 import re
 import time
-from urllib.parse import urlparse, parse_qs, urlencode, quote_plus, urlunparse
 from datetime import datetime
-
+from urllib.parse import urlparse, parse_qs, urlencode, quote_plus, urlunparse, urljoin, unquote
 
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
@@ -22,6 +21,7 @@ MAX_PAGES = 5             # limite de páginas de resultados
 PAGELOAD_TIMEOUT = 20     # segs por navegação
 SCRIPT_TIMEOUT = 20       # segs para JS
 ARTICLE_SOFT_WAIT = 3     # segs de “respiração” após abrir artigo
+EXCLUIR_DOMINIOS_BR = False  # define True se quiseres excluir sites .br
 
 # -------------------- Utilitários de logging/screenshot --------------------
 def ensure_dirs():
@@ -49,8 +49,18 @@ def save_shot(driver, name):
     except Exception as e:
         log(f"[DEBUG] Falhou guardar screenshot ({e})")
 
+def save_html(driver, name):
+    ensure_dirs()
+    path = os.path.join(SCREENSHOT_DIR, name)
+    try:
+        html = driver.page_source
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(html)
+        log(f"[DEBUG] HTML dump guardado: {path}")
+    except Exception as e:
+        log(f"[DEBUG] Falhou guardar HTML dump ({e})")
+
 def wait_ready_quick(driver, timeout=8):
-    # Espera o mínimo necessário (sem bloquear muito)
     end = time.time() + timeout
     while time.time() < end:
         try:
@@ -227,7 +237,8 @@ def map_time_filter(filtro_tempo: str) -> str:
         return "y"
     return ""
 
-def build_google_news_url(keyword: str, filtro_tempo: str, hl="pt-PT", gl="pt", lr="lang_pt") -> str:
+def build_google_news_url(keyword: str, filtro_tempo: str, hl="pt-PT", gl="pt", lr=None) -> str:
+    # lr=None por defeito para não restringir demasiado (pode reduzir a 0 resultados)
     q = quote_plus(keyword)
     qdr = map_time_filter(filtro_tempo)
     params = {
@@ -235,8 +246,9 @@ def build_google_news_url(keyword: str, filtro_tempo: str, hl="pt-PT", gl="pt", 
         "tbm": "nws",
         "hl": hl,
         "gl": gl,
-        "lr": lr
     }
+    if lr:
+        params["lr"] = lr
     if qdr:
         params["tbs"] = f"qdr:{qdr}"
     return "https://www.google.com/search?" + urlencode(params)
@@ -252,48 +264,98 @@ def get_next_results_page_url(current_url: str) -> str | None:
     except Exception:
         return None
 
+def extract_final_url(possible_google_url: str) -> str:
+    """Resolve href quando vem como /url? ou link do Google para link externo final."""
+    try:
+        parsed = urlparse(possible_google_url)
+        if "google." in parsed.netloc and parsed.path == "/url":
+            qs = parse_qs(parsed.query)
+            # ordem de preferência
+            for key in ("url", "q"):
+                if key in qs and qs[key]:
+                    return unquote(qs[key][0])
+        return possible_google_url
+    except Exception:
+        return possible_google_url
+
 # -------------------- Coleta e visita --------------------
 def coletar_links_noticias(driver):
     log("[DEBUG] A recolher links das notícias...")
+    links = []
+
+    # Espera por evidência de resultados no #search
     try:
-        # Espera os cabeçalhos de notícia
-        WebDriverWait(driver, 12).until(EC.presence_of_all_elements_located(
-            (By.XPATH, "//div[@role='heading' and contains(@class,'n0jPhd')]")
-        ))
-        blocos = driver.find_elements(By.XPATH, "//div[@role='heading' and contains(@class,'n0jPhd')]")
-        links = []
-        for bloco in blocos:
+        WebDriverWait(driver, 12).until(EC.presence_of_element_located((By.ID, "search")))
+    except Exception:
+        pass
+    time.sleep(0.4)
+
+    # Estratégias de seleção (em ordem)
+    strategies = [
+        ("css", "div.dbsr a"),  # markup clássico tbm=nws
+        ("xpath", "//div[@id='search']//a[.//h3]"),  # anchor com h3
+        ("xpath", "//div[@id='search']//a[.//div[@role='heading']]"),  # anchor com role=heading
+        ("css", "div#search a"),  # fallback: todos os links em #search
+    ]
+
+    seen = set()
+
+    for kind, sel in strategies:
+        try:
+            elems = driver.find_elements(By.CSS_SELECTOR, sel) if kind == "css" else driver.find_elements(By.XPATH, sel)
+        except Exception:
+            elems = []
+        for a in elems:
             try:
-                a_element = bloco.find_element(By.XPATH, ".//ancestor::a[1]")
-                href = a_element.get_attribute("href")
-                if not href or not href.startswith("http"):
+                href = a.get_attribute("href") or ""
+                if not href.startswith("http"):
                     continue
-                domain = urlparse(href).netloc.lower()
-                if ".br" in domain:
+                final_href = extract_final_url(href)
+                if not final_href.startswith("http"):
                     continue
+                # filtrar links google e duplicados
+                dom = urlparse(final_href).netloc.lower()
+                if "google." in dom:
+                    continue
+                if EXCLUIR_DOMINIOS_BR and dom.endswith(".br"):
+                    continue
+                if final_href in seen:
+                    continue
+
+                # tentar encontrar "data" relativa no cartão
                 data_text = "N/D"
                 try:
-                    data_parent = bloco.find_element(By.XPATH, "./../../..")
-                    spans = data_parent.find_elements(By.XPATH, ".//span")
-                    for span in spans:
-                        t = span.text.strip()
-                        if re.search(r"\d", t):
+                    card = a
+                    # subir a um container próximo
+                    try:
+                        card = a.find_element(By.XPATH, "./ancestor::*[self::div or self::article][1]")
+                    except Exception:
+                        pass
+                    spans = card.find_elements(By.XPATH, ".//span")
+                    for s in spans:
+                        t = s.text.strip()
+                        # heurística: contém dígitos ou palavras de tempo ('há', 'min', 'hora', 'dia', 'semana', 'mês', 'ano')
+                        if re.search(r"\d", t) or any(w in t.lower() for w in ("há", "min", "hora", "dia", "semana", "mês", "mes", "ano")):
                             data_text = t
                             break
                 except Exception:
                     pass
-                links.append((href, data_text))
+
+                seen.add(final_href)
+                links.append((final_href, data_text))
             except Exception:
                 continue
-        log(f"[DEBUG] {len(links)} links recolhidos.")
-        return links
-    except Exception as e:
-        log(f"[ERRO coletar_links_noticias]: {e}")
-        save_shot(driver, f"erro_coletar_links_{int(time.time())}.png")
-        return []
+
+        if links:
+            break  # já encontrámos via uma estratégia
+
+    log(f"[DEBUG] {len(links)} links recolhidos.")
+    if not links:
+        save_shot(driver, f"no_results_{int(time.time())}.png")
+        save_html(driver, f"no_results_{int(time.time())}.html")
+    return links
 
 def open_url_with_timeout(driver, url, timeout=PAGELOAD_TIMEOUT, soft_wait=ARTICLE_SOFT_WAIT):
-    # Navega com pageLoadStrategy=none + page_load_timeout, e se atrasar, faz window.stop()
     driver.set_page_load_timeout(timeout)
     try:
         driver.get(url)
@@ -303,13 +365,11 @@ def open_url_with_timeout(driver, url, timeout=PAGELOAD_TIMEOUT, soft_wait=ARTIC
         except Exception:
             pass
     except WebDriverException as e:
-        # Algumas hangs lançam WebDriverException sem msg; tenta parar
         try:
             driver.execute_script("window.stop();")
         except Exception:
             pass
         raise e
-    # Espera “rápida” pelo DOM
     wait_ready_quick(driver, timeout=min(soft_wait, 6))
     time.sleep(max(0.2, soft_wait - 1))
 
@@ -364,12 +424,10 @@ def visitar_links_mesma_aba(driver, links, keyword, resultados):
                 open_url_with_timeout(driver, results_url_for_return, timeout=PAGELOAD_TIMEOUT, soft_wait=2)
             except Exception as e:
                 log(f"[DEBUG] Falha ao regressar à página de resultados: {e}")
-                # Tenta de novo com get “puro”
                 try:
                     driver.get(results_url_for_return)
                 except Exception:
                     pass
-            # Pequena pausa entre iterações
             time.sleep(0.2)
 
 # -------------------- Execução --------------------
