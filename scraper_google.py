@@ -16,7 +16,7 @@ from selenium.common.exceptions import (
     TimeoutException,
 )
 
-HEADLESS = False  # True para headless, False para ver o browser
+# NOTE: This version runs with a visible browser window (NO headless flags).
 SCREENSHOT_DIR = "fotos_erros"
 
 def ensure_screenshot_dir():
@@ -220,7 +220,7 @@ def aceitar_cookies_se_existem(driver, screenshot_prefix="cookies"):
     try:
         js_candidates = [
             "document.querySelector('button[aria-label=\"Accept all\"]')",
-            "document.querySelector('button[aria-label*=\"accept\"])",
+            "document.querySelector('button[aria-label*=\"accept\"]')",
             "document.querySelector('[id*=\"consent\"] button')",
             "document.querySelector('[id*=\"cookie\"] button')",
             "document.querySelector('.qc-cmp2-summary-buttons .qc-cmp2-submit')",
@@ -270,7 +270,7 @@ def aceitar_cookies_se_existem(driver, screenshot_prefix="cookies"):
     print("[DEBUG] Nenhum botão de cookies conseguido clicar.")
     return False
 
-# As restantes funções do scraper (idênticas à estrutura que já tinhas):
+# As restantes funções do scraper:
 def clicar_noticias_tab(driver):
     print("[DEBUG] A tentar clicar no separador Notícias...")
     try:
@@ -469,8 +469,7 @@ def executar_scraper_google(keyword, filtro_tempo):
     options = uc.ChromeOptions()
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-blink-features=AutomationControlled")
-    if HEADLESS:
-        options.add_argument("--headless=new")
+    # NO headless flags - browser will be visible for debugging
     options.add_argument("--window-size=1280,1024")
     driver = uc.Chrome(options=options)
     driver.set_window_size(1280, 1024)
