@@ -49,7 +49,6 @@ def aceitar_cookies_se_existem(driver):
     print("[DEBUG] A tentar aceitar cookies (com iframes)...")
     time.sleep(2)
     textos = ['Aceitar tudo', 'Accept all', 'Aceitar', 'Concordo', 'Consent', 'Agree', 'OK']
-    # Primeiro tenta fora de iframes
     for texto in textos:
         try:
             print(f"[DEBUG] A procurar botão fora de iframes: {texto}")
@@ -63,7 +62,6 @@ def aceitar_cookies_se_existem(driver):
         except Exception as e:
             print(f"[DEBUG] Não encontrou botão '{texto}' fora de iframe: {e}")
             continue
-    # Agora tenta dentro de iframes
     iframes = driver.find_elements(By.TAG_NAME, "iframe")
     print(f"[DEBUG] {len(iframes)} iframes encontrados.")
     for iframe in iframes:
@@ -306,7 +304,6 @@ def executar_scraper_google(keyword, filtro_tempo):
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument("--headless=new")
     options.add_argument("--window-size=1280,1024")
-    # Opcional: força um user-agent de desktop comum
     options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36")
     driver = uc.Chrome(options=options)
     driver.set_window_size(1280, 1024)
@@ -314,10 +311,10 @@ def executar_scraper_google(keyword, filtro_tempo):
     try:
         print("[DEBUG] A abrir o Google...")
         driver.get("https://www.google.com")
-        time.sleep(4)  # Espera mais tempo para overlays sumirem
-
+        time.sleep(4)
         driver.save_screenshot(f"debug_google_{int(time.time())}.png")
-
+        aceitar_cookies_se_existem(driver)
+        driver.save_screenshot(f"apos_cookies_{int(time.time())}.png")
         # Alternativa: tenta todos os inputs visíveis e enabled
         inputs = driver.find_elements(By.TAG_NAME, "input")
         for i, inp in enumerate(inputs):
@@ -337,20 +334,22 @@ def executar_scraper_google(keyword, filtro_tempo):
             driver.save_screenshot(f"erro_campo_{int(time.time())}.png")
             return []
 
-        # Extra debug do input selecionado
+        print("[DEBUG] search_input.is_displayed():", search_input.is_displayed())
+        print("[DEBUG] search_input.is_enabled():", search_input.is_enabled())
+        print("[DEBUG] search_input.location:", search_input.location)
+        print("[DEBUG] search_input.size:", search_input.size)
         print("[DEBUG] search_input.tag_name", search_input.tag_name)
         print("[DEBUG] search_input.get_attribute('outerHTML')", search_input.get_attribute('outerHTML'))
 
+        # Não clicar! Só focus e send_keys (por causa do overlay)
         driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", search_input)
         time.sleep(0.2)
         driver.execute_script("arguments[0].focus();", search_input)
+        print("[DEBUG] A tentar escrever diretamente no campo de pesquisa (sem clicar).")
         try:
-            search_input.click()
-            print("[DEBUG] Cliquei no campo de pesquisa alternativo.")
+            search_input.clear()
         except Exception as e:
-            print("[DEBUG] Erro click alternativo:", e)
-
-        print(f"[DEBUG] A escrever pesquisa: {keyword}")
+            print("[DEBUG] Erro ao limpar o campo:", e)
         for letra in keyword:
             search_input.send_keys(letra)
             time.sleep(0.21)
