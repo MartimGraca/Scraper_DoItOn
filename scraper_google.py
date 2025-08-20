@@ -63,7 +63,7 @@ def aceitar_cookies_se_existem(driver):
         except Exception as e:
             print(f"[DEBUG] Não encontrou botão '{texto}' fora de iframe: {e}")
             continue
-    
+    # Agora tenta dentro de iframes
     iframes = driver.find_elements(By.TAG_NAME, "iframe")
     print(f"[DEBUG] {len(iframes)} iframes encontrados.")
     for iframe in iframes:
@@ -312,18 +312,33 @@ def executar_scraper_google(keyword, filtro_tempo):
     try:
         print("[DEBUG] A abrir o Google...")
         driver.get("https://www.google.com")
+        driver.save_screenshot(f"antes_cookies_{int(time.time())}.png")
         aceitar_cookies_se_existem(driver)
+        driver.save_screenshot(f"apos_cookies_{int(time.time())}.png")
 
         print(f"[DEBUG] A procurar campo de pesquisa...")
+        driver.save_screenshot(f"antes_pesquisa_{int(time.time())}.png")
         search_input = WebDriverWait(driver, 10).until(
             EC.element_to_be_clickable((By.NAME, "q"))
         )
-        time.sleep(1.3)
+        print("[DEBUG] search_input.is_displayed():", search_input.is_displayed())
+        print("[DEBUG] search_input.is_enabled():", search_input.is_enabled())
+        print("[DEBUG] search_input.location:", search_input.location)
+        print("[DEBUG] search_input.size:", search_input.size)
+        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", search_input)
+        time.sleep(0.2)
+        try:
+            search_input.click()
+            print("[DEBUG] Cliquei no campo de pesquisa.")
+        except Exception as e:
+            print("[DEBUG] Erro ao clicar no campo:", e)
+
         print(f"[DEBUG] A escrever pesquisa: {keyword}")
         for letra in keyword:
             search_input.send_keys(letra)
             time.sleep(0.21)
         search_input.send_keys(Keys.ENTER)
+        driver.save_screenshot(f"apos_pesquisa_{int(time.time())}.png")
         time.sleep(2.5)
 
         if clicar_noticias_tab(driver):
