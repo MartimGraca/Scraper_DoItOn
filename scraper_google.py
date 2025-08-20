@@ -9,6 +9,8 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
+HEADLESS = False  # True para headless, False para ver o browser
+
 def safe_click(driver, element, screenshot_prefix="erro_click"):
     try:
         driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", element)
@@ -358,7 +360,8 @@ def executar_scraper_google(keyword, filtro_tempo):
     options = uc.ChromeOptions()
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_argument("--headless=new")
+    if HEADLESS:
+        options.add_argument("--headless=new")
     options.add_argument("--window-size=1280,1024")
     driver = uc.Chrome(options=options)
     driver.set_window_size(1280, 1024)
