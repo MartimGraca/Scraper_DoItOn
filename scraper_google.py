@@ -11,35 +11,89 @@ from selenium.webdriver.support import expected_conditions as EC
 
 def safe_click(driver, element, screenshot_prefix="erro_click"):
     try:
-        print(f"[DEBUG] A tentar dar scroll para o elemento {element}...")
-        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
-        time.sleep(0.2)
-        print(f"[DEBUG] Displayed: {element.is_displayed()}, Enabled: {element.is_enabled()}")
+        driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", element)
+        time.sleep(0.5)
         screenshot_nome = f"{screenshot_prefix}_{int(time.time())}_antes.png"
         driver.save_screenshot(screenshot_nome)
         print(f"[DEBUG] Screenshot ANTES do click: {screenshot_nome}")
-        element.click()
-        screenshot_nome = f"{screenshot_prefix}_{int(time.time())}_depois.png"
-        driver.save_screenshot(screenshot_nome)
-        print(f"[DEBUG] Screenshot DEPOIS do click: {screenshot_nome}")
-        print("[DEBUG] Ficheiros após click:", os.listdir("."))
-    except Exception as e:
+        if element.is_displayed() and element.is_enabled():
+            try:
+                element.click()
+                print("[DEBUG] Click normal OK")
+                screenshot_nome = f"{screenshot_prefix}_{int(time.time())}_depois.png"
+                driver.save_screenshot(screenshot_nome)
+                print(f"[DEBUG] Screenshot DEPOIS do click: {screenshot_nome}")
+                return
+            except Exception as e:
+                print(f"[DEBUG] Falhou click normal: {e}")
+        else:
+            print("[DEBUG] Elemento não está visível ou não está enabled.")
+
+        # Tenta clicar com JS
         try:
-            print("[DEBUG] Falhou click normal, a tentar JS click...")
-            screenshot_nome = f"{screenshot_prefix}_{int(time.time())}_js_antes.png"
-            driver.save_screenshot(screenshot_nome)
-            print(f"[DEBUG] Screenshot ANTES do JS click: {screenshot_nome}")
             driver.execute_script("arguments[0].click();", element)
-            screenshot_nome = f"{screenshot_prefix}_{int(time.time())}_js_depois.png"
+            print("[DEBUG] Click via JS OK")
+            screenshot_nome = f"{screenshot_prefix}_{int(time.time())}_js_click.png"
             driver.save_screenshot(screenshot_nome)
-            print(f"[DEBUG] Screenshot DEPOIS do JS click: {screenshot_nome}")
-            print("[DEBUG] Ficheiros após JS click:", os.listdir("."))
-        except Exception as e2:
-            screenshot_nome = f"{screenshot_prefix}_{int(time.time())}_erro.png"
+            print(f"[DEBUG] Screenshot após JS click: {screenshot_nome}")
+            return
+        except Exception as e:
+            print(f"[DEBUG] Falhou click via JS: {e}")
+
+        # Tenta clicar por classname (como no exemplo do blog)
+        try:
+            class_name = element.get_attribute("class")
+            if class_name:
+                js = f"""
+                var elems = document.getElementsByClassName('{class_name.split()[0]}');
+                if(elems.length) elems[0].click();
+                """
+                driver.execute_script(js)
+                print("[DEBUG] Click via JS por className OK")
+                screenshot_nome = f"{screenshot_prefix}_{int(time.time())}_js_class_click.png"
+                driver.save_screenshot(screenshot_nome)
+                print(f"[DEBUG] Screenshot após JS class click: {screenshot_nome}")
+                return
+        except Exception as e:
+            print(f"[DEBUG] Falhou click via JS por className: {e}")
+
+        # Tenta remover overlays comuns
+        try:
+            driver.execute_script("""
+            let overlays = document.querySelectorAll('div[role=dialog], .modal, .overlay, .popup');
+            overlays.forEach(el => el.parentNode.removeChild(el));
+            """)
+            print("[DEBUG] Overlays removidos por JS")
+            time.sleep(0.5)
+            element.click()
+            print("[DEBUG] Click após remover overlays OK")
+            screenshot_nome = f"{screenshot_prefix}_{int(time.time())}_overlay_click.png"
             driver.save_screenshot(screenshot_nome)
-            print(f"[DEBUG] Erro ao clicar, screenshot: {screenshot_nome}")
-            print("[DEBUG] Ficheiros após erro:", os.listdir("."))
-            raise Exception(f"Safe click falhou: {e} / {e2}")
+            print(f"[DEBUG] Screenshot após overlay click: {screenshot_nome}")
+            return
+        except Exception as e:
+            print(f"[DEBUG] Falhou click após remover overlays: {e}")
+
+        # Se ainda não funcionou, tenta novamente com JS após scroll extra
+        try:
+            driver.execute_script("window.scrollBy(0, 150);")
+            time.sleep(0.5)
+            driver.execute_script("arguments[0].click();", element)
+            print("[DEBUG] Click via JS após scroll extra OK")
+            screenshot_nome = f"{screenshot_prefix}_{int(time.time())}_js_scroll_click.png"
+            driver.save_screenshot(screenshot_nome)
+            print(f"[DEBUG] Screenshot após JS scroll click: {screenshot_nome}")
+            return
+        except Exception as e:
+            print(f"[DEBUG] Falhou click via JS após scroll extra: {e}")
+
+        raise Exception("Nenhuma estratégia de click funcionou para este elemento.")
+
+    except Exception as e2:
+        screenshot_nome = f"{screenshot_prefix}_{int(time.time())}_erro.png"
+        driver.save_screenshot(screenshot_nome)
+        print(f"[DEBUG] Erro ao clicar, screenshot: {screenshot_nome}")
+        raise Exception(f"Safe click falhou por completo: {e2}")
 
 def aceitar_cookies_se_existem(driver, screenshot_dir="fotos erros"):
     print("[DEBUG] A tentar aceitar cookies (com iframes)...")
