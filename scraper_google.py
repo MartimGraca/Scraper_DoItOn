@@ -1,8 +1,9 @@
 import os
 import re
 import time
-from datetime import datetime
 from urllib.parse import urlparse, parse_qs, urlencode, quote_plus, urlunparse
+from datetime import datetime
+
 
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
