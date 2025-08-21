@@ -9,18 +9,15 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-
 # ================= Config =================
 HEADLESS = os.getenv("HEADLESS", "0") == "1"   # export HEADLESS=1 para headless
 UC_VERSION_MAIN = os.getenv("UC_VERSION_MAIN") # ex.: "137" (como no teu localhost)
 SCREENSHOT_DIR = "fotos_erros"
 os.makedirs(SCREENSHOT_DIR, exist_ok=True)
 
-
 def log(msg):
     ts = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
     print(f"[{ts}] {msg}", flush=True)
-
 
 def save_shot(driver, name):
     path = os.path.join(SCREENSHOT_DIR, name)
@@ -29,7 +26,6 @@ def save_shot(driver, name):
         log(f"[DEBUG] Screenshot guardada: {path}")
     except Exception as e:
         log(f"[DEBUG] Falhou screenshot: {e}")
-
 
 def save_html(driver, name):
     path = os.path.join(SCREENSHOT_DIR, name)
@@ -40,7 +36,6 @@ def save_html(driver, name):
         log(f"[DEBUG] HTML guardado: {path}")
     except Exception as e:
         log(f"[DEBUG] Falhou HTML dump: {e}")
-
 
 # ================ Cookies ==================
 def aceitar_cookies_se_existem(driver):
@@ -68,7 +63,6 @@ def aceitar_cookies_se_existem(driver):
         except Exception:
             continue
 
-
 # ============== Navegação Google ============
 def clicar_noticias_tab(driver):
     try:
@@ -80,7 +74,6 @@ def clicar_noticias_tab(driver):
         return True
     except Exception:
         return False
-
 
 def aplicar_filtro_tempo(driver, filtro_tempo):
     if not filtro_tempo:
@@ -111,7 +104,6 @@ def aplicar_filtro_tempo(driver, filtro_tempo):
     except Exception as e:
         log(f"[ERRO filtro]: {e}")
 
-
 def clicar_linguagem(driver):
     # Só se aparecer
     try:
@@ -127,7 +119,6 @@ def clicar_linguagem(driver):
         time.sleep(1.0)
     except Exception:
         pass
-
 
 # ============== Coleta/Visita ===============
 def coletar_links_noticias(driver):
@@ -245,7 +236,6 @@ def coletar_links_noticias(driver):
         save_html(driver, f"no_results_{int(time.time())}.html")
     return links
 
-
 def visitar_links(driver, links, keyword, resultados):
     for href, data_pub in links:
         try:
@@ -336,7 +326,6 @@ def visitar_links(driver, links, keyword, resultados):
             except Exception:
                 pass
 
-
 def proxima_pagina(driver):
     try:
         WebDriverWait(driver, 6).until(
@@ -360,53 +349,30 @@ def proxima_pagina(driver):
         except Exception:
             return False
 
-
-# ============== Driver (corrige reuse das Options) =============
-def build_chrome_options():
-    opts = uc.ChromeOptions()
-    if HEADLESS:
-        opts.add_argument("--headless=new")
-    opts.add_argument("--no-sandbox")
-    opts.add_argument("--disable-dev-shm-usage")
-    opts.add_argument("--disable-blink-features=AutomationControlled")
-    opts.add_argument("--window-size=1366,768")
-    opts.add_argument("--disable-extensions")
-    opts.add_argument("--log-level=2")
-    opts.add_argument("--lang=pt-PT")
-    return opts
-
-
+# ============== Driver (simples; sem reutilizar Options) =============
 def create_driver():
-    last_exc = None
-    attempts = []
+    options = uc.ChromeOptions()
+    if HEADLESS:
+        options.add_argument("--headless=new")  # não usamos options.headless
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_argument("--window-size=1366,768")
+    options.add_argument("--disable-extensions")
+    options.add_argument("--log-level=2")
+    options.add_argument("--lang=pt-PT")
+
     if UC_VERSION_MAIN:
-        try:
-            attempts.append(int(UC_VERSION_MAIN))
-        except Exception:
-            pass
+        return uc.Chrome(options=options, version_main=int(UC_VERSION_MAIN))
     else:
-        attempts.append(137)  # o que sabes que funcionava no teu local
-    attempts.append(None)     # tentativa “auto” do UC
-
-    for ver in attempts:
         try:
-            options = build_chrome_options()  # CRIAR SEMPRE NOVA INSTÂNCIA
-            if ver is None:
-                driver = uc.Chrome(options=options)
-            else:
-                driver = uc.Chrome(options=options, version_main=ver)
-            return driver
-        except Exception as e:
-            last_exc = e
-            continue
-    if last_exc:
-        raise last_exc
-    raise RuntimeError("Falha a criar driver (motivo desconhecido)")
-
+            return uc.Chrome(options=options, version_main=137)  # como no teu local
+        except Exception:
+            return uc.Chrome(options=options)
 
 # ============== Runner principal =============
 def executar_scraper_google(keyword, filtro_tempo):
-    log("[DEBUG] A iniciar (1 ficheiro, coleta/visita como no teu local).")
+    log("[DEBUG] A iniciar (1 ficheiro, fluxo antigo + clique nas notícias).")
 
     driver = create_driver()
 
@@ -455,7 +421,6 @@ def executar_scraper_google(keyword, filtro_tempo):
 
     return resultados
 
-
 def rodar_scraper_sequencial(keywords_string, filtro_tempo):
     all_results = []
     keywords = [k.strip() for k in keywords_string.split(",") if k.strip()]
@@ -476,7 +441,6 @@ def rodar_scraper_sequencial(keywords_string, filtro_tempo):
                 "keyword": kw
             })
     return all_results
-
 
 if __name__ == "__main__":
     kws = input("Palavras-chave separadas por vírgula: ")
