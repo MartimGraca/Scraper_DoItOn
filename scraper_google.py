@@ -2,7 +2,7 @@ import os
 import re
 import time
 from datetime import datetime
-from urllib.parse import urlparse, urlunparse, urljoin, urlparse as _uparse, parse_qs, urlencode, urlunparse
+from urllib.parse import urlparse, urlunparse, urljoin
 
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
@@ -23,6 +23,9 @@ SCRIPT_TIMEOUT = 20
 WAIT_SHORT = 0.2
 WAIT_MED = 0.6
 
+# -------------------------------------------------------------
+# Utilitários
+# -------------------------------------------------------------
 def ensure_dirs():
     os.makedirs(SCREENSHOT_DIR, exist_ok=True)
 
@@ -82,24 +85,29 @@ def try_click(driver, el, prefix="click"):
         time.sleep(WAIT_SHORT)
     except Exception:
         pass
+
     try:
         ActionChains(driver).move_to_element(el).pause(0.05).click(el).perform()
         save_shot(driver, f"{prefix}_action_{ts}.png")
         return True
     except Exception:
         pass
+
     try:
         el.click()
         save_shot(driver, f"{prefix}_selenium_{ts}.png")
         return True
     except Exception:
         pass
+
     try:
         driver.execute_script("arguments[0].click();", el)
         save_shot(driver, f"{prefix}_js_{ts}.png")
         return True
     except Exception:
         pass
+
+    # Remover overlays e tentar JS click
     try:
         driver.execute_script("""
             var overlays = document.querySelectorAll(
@@ -113,7 +121,43 @@ def try_click(driver, el, prefix="click"):
         return True
     except Exception:
         pass
+
     return False
+
+def normalize_google_href(href, base="https://www.google.com"):
+    try:
+        if href.startswith("/"):
+            return urljoin(base, href)
+        return href
+    except Exception:
+        return href
+
+# -------------------------------------------------------------
+# Cookies
+# -------------------------------------------------------------
+def localizar_botao_por_textos(driver, textos):
+    xps = []
+    for t in textos:
+        tnorm = t.replace("'", "\\'")
+        xp_cond = f"contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '{tnorm.lower()}')"
+        xps.extend([
+            f"//button[{xp_cond}]",
+            f"//div[{xp_cond}]",
+            f"//span[{xp_cond}]",
+            f"//a[{xp_cond}]",
+        ])
+    for xp in xps:
+        try:
+            els = driver.find_elements(By.XPATH, xp)
+            for el in els:
+                try:
+                    if el.is_displayed() and el.is_enabled():
+                        return el
+                except Exception:
+                    continue
+        except Exception:
+            continue
+    return None
 
 def aceitar_cookies_se_existem(driver, prefix="cookies"):
     try:
@@ -121,51 +165,60 @@ def aceitar_cookies_se_existem(driver, prefix="cookies"):
         time.sleep(0.5)
         textos = ['Aceitar tudo','Accept all','Aceitar','Concordo','Consent','Agree','OK','Aceitar cookies','Aceitar todos']
         # Fora iframes
-        for xp in [
-            "//button//div[normalize-space(text())='Aceitar tudo']",
-            "//button[contains(translate(., 'ACEITAR', 'aceitar'),'aceitar')]",
-            "//div[contains(translate(., 'ACEITAR', 'aceitar'),'aceitar')]",
-            "//span[contains(translate(., 'ACEITAR', 'aceitar'),'aceitar')]",
-            "//button[contains(@aria-label, 'Accept')]",
-        ]:
+        btn = localizar_botao_por_textos(driver, textos)
+        if btn and try_click(driver, btn, prefix=f"{prefix}_out"):
+            log("[DEBUG] Cookies aceites (fora iframe).")
             try:
-                btn = driver.find_element(By.XPATH, xp)
-                if btn and try_click(driver, btn, prefix=f"{prefix}_out"):
-                    log("[DEBUG] Cookies aceites (fora iframe).")
-                    return True
+                driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
             except Exception:
                 pass
+            return True
 
-        # iframes
+        # Dentro iframes
         iframes = driver.find_elements(By.TAG_NAME, "iframe")
         for i, fr in enumerate(iframes):
             try:
                 driver.switch_to.frame(fr)
                 time.sleep(0.2)
-                for xp in [
-                    "//button//div[normalize-space(text())='Aceitar tudo']",
-                    "//button[contains(translate(., 'ACEITAR', 'aceitar'),'aceitar')]",
-                    "//div[contains(translate(., 'ACEITAR', 'aceitar'),'aceitar')]",
-                    "//span[contains(translate(., 'ACEITAR', 'aceitar'),'aceitar')]",
-                    "//button[contains(@aria-label, 'Accept')]",
-                ]:
+                btn = localizar_botao_por_textos(driver, textos)
+                if btn and try_click(driver, btn, prefix=f"{prefix}_in_{i}"):
+                    driver.switch_to.default_content()
+                    log("[DEBUG] Cookies aceites (iframe).")
                     try:
-                        btn = driver.find_element(By.XPATH, xp)
-                        if btn and try_click(driver, btn, prefix=f"{prefix}_in_{i}"):
-                            driver.switch_to.default_content()
-                            log("[DEBUG] Cookies aceites (iframe).")
-                            return True
+                        driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
                     except Exception:
                         pass
+                    return True
                 driver.switch_to.default_content()
             except Exception:
                 driver.switch_to.default_content()
+
+        # JS direto
+        for sel in [
+            "button[aria-label='Accept all']",
+            "button[aria-label*='accept' i]",
+            "[id*='consent' i] button",
+            "[id*='cookie' i] button",
+            ".qc-cmp2-summary-buttons .qc-cmp2-submit",
+            "button[data-testid*='accept' i]",
+        ]:
+            try:
+                ok = driver.execute_script(f"var el = document.querySelector('{sel}'); if(el){{ el.click(); return true; }} return false;")
+                if ok:
+                    log("[DEBUG] Cookies aceites via JS generic.")
+                    return True
+            except Exception:
+                continue
+
         log("[DEBUG] Nenhum botão de cookies encontrado/clicado.")
         return False
     except Exception as e:
         log(f"[ERRO aceitar_cookies]: {e}")
         return False
 
+# -------------------------------------------------------------
+# Passos Google: pesquisa -> tab Notícias -> filtros -> linguagem
+# -------------------------------------------------------------
 def abrir_pesquisa_google(driver, keyword):
     url = f"https://www.google.com/search?q={keyword}&hl=pt-PT&gl=pt"
     open_url_with_timeout(driver, url, soft_wait=1.0)
@@ -181,22 +234,6 @@ def clicar_noticias_tab(driver):
     except Exception as e:
         log(f"[ERRO clicar_noticias_tab]: {e}")
     return False
-
-def forcar_udm14(driver):
-    # Simplifica o markup do SERP (mais fácil apanhar h3/a)
-    try:
-        cur = driver.current_url
-        p = _uparse(cur)
-        qs = parse_qs(p.query)
-        if qs.get("udm", [""])[0] != "14":
-            qs["udm"] = ["14"]
-            newq = urlencode({k: v[0] if isinstance(v, list) else v for k, v in qs.items()})
-            new_url = urlunparse((p.scheme, p.netloc, p.path, p.params, newq, p.fragment))
-            open_url_with_timeout(driver, new_url, soft_wait=1.0)
-            aceitar_cookies_se_existem(driver, prefix="google_cookies_udm")
-            log("[DEBUG] UDM=14 aplicado.")
-    except Exception as e:
-        log(f"[DEBUG] Falha a aplicar UDM=14: {e}")
 
 def aplicar_filtro_tempo(driver, filtro_tempo):
     if not filtro_tempo or not filtro_tempo.strip():
@@ -225,7 +262,7 @@ def aplicar_filtro_tempo(driver, filtro_tempo):
             driver.execute_script("arguments[0].scrollIntoView({block:'center'});", alvo)
             time.sleep(0.3)
             driver.execute_script("arguments[0].click();", alvo)
-            time.sleep(1.0)
+            time.sleep(1.2)
     except Exception as e:
         log(f"[ERRO filtro]: {e}")
 
@@ -236,41 +273,106 @@ def clicar_linguagem(driver):
             EC.element_to_be_clickable((By.XPATH, "//div[contains(@class, 'KTBKoe') and contains(., 'Pesquisar na Web')]"))
         )
         try_click(driver, pesquisar_div, prefix="lingua_pesquisar_na_web")
-        time.sleep(0.6)
+        time.sleep(0.8)
 
         link_pt = WebDriverWait(driver, 6).until(
             EC.element_to_be_clickable((By.XPATH, "//a[contains(., 'Pesquisar páginas em Português')]"))
         )
         try_click(driver, link_pt, prefix="lingua_pesquisar_pt")
-        time.sleep(0.8)
+        time.sleep(1.0)
     except Exception as e:
         log(f"[DEBUG] Linguagem: não aplicável/visível ({e})")
 
-def contar_seletores(driver):
-    sels = {
-        "div.dbsr a": "//div[contains(@class,'dbsr')]//a[@href]",
-        "a.WlydOe": "//a[contains(@class,'WlydOe')][@href]",
-        "a.tHmfQe": "//a[contains(@class,'tHmfQe')][@href]",
-        "a.VDXfz": "//a[contains(@class,'VDXfz')][@href]",
-        "a with h3": "//a[.//h3][@href]",
-        "a with role=heading": "//a[.//div[@role='heading']][@href]",
-        "heading n0jPhd": "//div[@role='heading' and contains(@class,'n0jPhd')]",
-        "all anchors": "//a[@href]"
-    }
-    counts = {}
-    for name, xp in sels.items():
-        try:
-            counts[name] = len(driver.find_elements(By.XPATH, xp))
-        except Exception:
-            counts[name] = -1
-    log(f"[DEBUG] Contagens seletores: {counts}")
+# -------------------------------------------------------------
+# JS deep-collect para resultados em shadow DOM
+# -------------------------------------------------------------
+def js_coletar_links_deep(driver):
+    js = r"""
+    return (function(){
+      const out = [];
+      const seen = new Set();
+      const MAX = 5000;
+      const queue = [];
+      const visited = new Set();
+      function push(root){
+        if (!root) return;
+        if (visited.has(root)) return;
+        visited.add(root);
+        queue.push(root);
+      }
+      push(document);
+      if (document.body) push(document.body);
 
+      function collectFromRoot(root){
+        let anchors = [];
+        try { anchors = root.querySelectorAll ? root.querySelectorAll('a[href]') : []; } catch(e){}
+        anchors.forEach(a => {
+          try {
+            const hrefRaw = a.getAttribute('href') || '';
+            if (!hrefRaw) return;
+            if (!(hrefRaw.startsWith('http') || hrefRaw.startsWith('/url'))) return;
+            // filtrar navegação interna do Google (exceto /url que redireciona para fora)
+            try {
+              const abs = new URL(hrefRaw, location.origin);
+              const host = abs.hostname || '';
+              if ((host.endsWith('google.com') || host.includes('googleusercontent')) && !hrefRaw.startsWith('/url')) return;
+            } catch(e) {}
+            // container para data e contexto
+            let container = a.closest('div.dbsr, article, div.SoaBEf, div.Gx5Zad, div.MBeuO, div.N0jPhd, div.UFQHwe') || a.parentElement || a;
+            let dateTxt = '';
+            if (container) {
+              let t = container.querySelector('time');
+              if (t) dateTxt = (t.getAttribute('aria-label') || t.textContent || '').trim();
+              if (!dateTxt) {
+                let s = container.querySelector('span');
+                if (s) dateTxt = (s.getAttribute('aria-label') || s.textContent || '').trim();
+              }
+            }
+            const hrefAbs = hrefRaw.startsWith('/') ? new URL(hrefRaw, location.origin).href : hrefRaw;
+            if (!seen.has(hrefAbs)) {
+              seen.add(hrefAbs);
+              out.push({
+                href: hrefAbs,
+                title: (a.textContent || '').trim(),
+                date: dateTxt
+              });
+            }
+          } catch(e){}
+        });
+      }
+
+      while (queue.length) {
+        const root = queue.shift();
+        collectFromRoot(root);
+        // expandir filhos e shadow roots
+        try {
+          const children = root.children || [];
+          for (const el of children) {
+            try { if (el.shadowRoot) push(el.shadowRoot); } catch(e){}
+            push(el);
+          }
+        } catch(e){}
+        if (out.length > MAX) break;
+      }
+
+      return out;
+    })();
+    """
+    try:
+        items = driver.execute_script(js)
+        return items or []
+    except Exception:
+        return []
+
+# -------------------------------------------------------------
+# Coleta de links (JS deep primeiro; depois fallback XPaths)
+# -------------------------------------------------------------
 def coletar_links_noticias(driver, excluir_br=False):
     log("[DEBUG] A recolher links das notícias...")
     links = []
     seen = set()
 
-    # 3 tentativas com scroll (conteúdo lazy)
+    # 3 tentativas via JS deep, com scroll entre tentativas
     for attempt in range(3):
         if attempt > 0:
             try:
@@ -279,143 +381,127 @@ def coletar_links_noticias(driver, excluir_br=False):
                 pass
             time.sleep(0.9)
 
-        # Estratégias de anchors (prioridade)
-        strategies = [
-            ("dbsr", "//div[contains(@class,'dbsr')]//a[@href]"),
-            ("WlydOe", "//a[contains(@class,'WlydOe')][@href]"),
-            ("tHmfQe", "//a[contains(@class,'tHmfQe')][@href]"),
-            ("VDXfz", "//a[contains(@class,'VDXfz')][@href]"),
-            ("a_h3", "//a[.//h3][@href]"),
-            ("a_role_heading", "//a[.//div[@role='heading']][@href]"),
-        ]
-
-        found_any = False
-        for name, xp in strategies:
+        items = js_coletar_links_deep(driver)
+        for it in items:
             try:
-                anchors = driver.find_elements(By.XPATH, xp)
+                href = it.get("href") or ""
+                if not href:
+                    continue
+                if excluir_br and href.startswith("http"):
+                    dom = urlparse(href).netloc.lower()
+                    if dom.endswith(".br"):
+                        continue
+                # validar padrão de data (igual ao teu)
+                data_text = "N/D"
+                dt = (it.get("date") or "").strip()
+                if re.match(r"^há\s+\d+\s+(minuto|hora|dia|semana|m[eê]s|ano)s?$", dt, flags=re.IGNORECASE) or \
+                   re.match(r"^\d{2}/\d{2}/\d{4}$", dt) or \
+                   (re.search(r"\d", dt) and any(w in dt.lower() for w in ("há","min","hora","dia","semana","mês","mes","ano"))):
+                    data_text = dt
+
+                if href not in seen:
+                    seen.add(href)
+                    links.append((href, data_text))
             except Exception:
-                anchors = []
-            if not anchors:
                 continue
-
-            for a_el in anchors:
-                try:
-                    href = a_el.get_attribute("href") or ""
-                    if not href:
-                        continue
-                    if not (href.startswith("http") or href.startswith("/url")):
-                        continue
-
-                    # data (procurar próximo do container)
-                    data_text = "N/D"
-                    try:
-                        container = a_el.find_element(By.XPATH, "./ancestor::*[self::div or self::article][1]")
-                    except Exception:
-                        container = a_el
-                    try:
-                        spans = container.find_elements(By.XPATH, ".//span|.//time")
-                        for sp in spans:
-                            txt = (sp.get_attribute("aria-label") or sp.text or "").strip()
-                            if not txt:
-                                continue
-                            if re.match(r"^há\s+\d+\s+(minuto|hora|dia|semana|m[eê]s|ano)s?$", txt, flags=re.IGNORECASE):
-                                data_text = txt; break
-                            if re.match(r"^\d{2}/\d{2}/\d{4}$", txt):
-                                data_text = txt; break
-                            if re.search(r"\d", txt) and any(w in txt.lower() for w in ("há","min","hora","dia","semana","mês","mes","ano")):
-                                data_text = txt; break
-                    except Exception:
-                        pass
-
-                    key = href
-                    if key in seen:
-                        continue
-                    # filtro .br opcional (só se href for http)
-                    try:
-                        if excluir_br and href.startswith("http"):
-                            dom = urlparse(href).netloc.lower()
-                            if dom.endswith(".br"):
-                                continue
-                    except Exception:
-                        pass
-
-                    seen.add(key)
-                    links.append((href, data_text))
-                except Exception:
-                    continue
-
-            if links:
-                found_any = True
-                break
-
-        # Último recurso: o teu caminho original (heading -> ancestor::a)
-        if not found_any:
-            try:
-                blocos = driver.find_elements(By.XPATH, "//div[@role='heading' and contains(@class,'n0jPhd')]")
-            except Exception:
-                blocos = []
-            for bloco in blocos:
-                try:
-                    a_el = bloco.find_element(By.XPATH, ".//ancestor::a[1]")
-                    href = a_el.get_attribute("href") or ""
-                    if not href:
-                        continue
-                    if not (href.startswith("http") or href.startswith("/url")):
-                        continue
-                    data_text = "N/D"
-                    try:
-                        data_parent = bloco.find_element(By.XPATH, "./../../..")
-                        spans = data_parent.find_elements(By.XPATH, ".//span|.//time")
-                        for sp in spans:
-                            txt = (sp.get_attribute("aria-label") or sp.text or "").strip()
-                            if not txt:
-                                continue
-                            if re.match(r"^há\s+\d+\s+(minuto|hora|dia|semana|m[eê]s|ano)s?$", txt, flags=re.IGNORECASE):
-                                data_text = txt; break
-                            if re.match(r"^\d{2}/\d{2}/\d{4}$", txt):
-                                data_text = txt; break
-                            if re.search(r"\d", txt) and any(w in txt.lower() for w in ("há","min","hora","dia","semana","mês","mes","ano")):
-                                data_text = txt; break
-                    except Exception:
-                        pass
-                    key = href
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    links.append((href, data_text))
-                except Exception:
-                    continue
 
         if links:
             break
 
+    # Fallback: os teus seletores originais
+    if not links:
+        raw_items = []
+        try:
+            blocos = WebDriverWait(driver, 12).until(
+                EC.presence_of_all_elements_located((By.XPATH, "//div[@role='heading' and contains(@class,'n0jPhd')]"))
+            )
+            for bloco in blocos:
+                try:
+                    a_el = bloco.find_element(By.XPATH, ".//ancestor::a[1]")
+                    href = a_el.get_attribute("href") or ""
+                    if href:
+                        raw_items.append((a_el, href))
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+        if not raw_items:
+            try:
+                anchors = driver.find_elements(By.XPATH, "//a[.//div[@role='heading'] or .//h3]")
+                for a_el in anchors:
+                    try:
+                        href = a_el.get_attribute("href") or ""
+                        if href:
+                            raw_items.append((a_el, href))
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+
+        for a_el, href in raw_items:
+            try:
+                if href.startswith("/"):
+                    href = urljoin("https://www.google.com", href)
+                if excluir_br and href.startswith("http"):
+                    dom = urlparse(href).netloc.lower()
+                    if dom.endswith(".br"):
+                        continue
+                data_text = "N/D"
+                try:
+                    data_parent = a_el.find_element(By.XPATH, ".//ancestor::*[self::div or self::article][1]")
+                    spans = data_parent.find_elements(By.XPATH, ".//span|.//time")
+                    for sp in spans:
+                        txt = (sp.get_attribute("aria-label") or sp.text or "").strip()
+                        if not txt:
+                            continue
+                        if re.match(r"^há\s+\d+\s+(minuto|hora|dia|semana|m[eê]s|ano)s?$", txt, flags=re.IGNORECASE):
+                            data_text = txt; break
+                        if re.match(r"^\d{2}/\d{2}/\d{4}$", txt):
+                            data_text = txt; break
+                        if re.search(r"\d", txt) and any(w in txt.lower() for w in ("há","min","hora","dia","semana","mês","mes","ano")):
+                            data_text = txt; break
+                except Exception:
+                    pass
+                if href not in seen:
+                    seen.add(href)
+                    links.append((href, data_text))
+            except Exception:
+                continue
+
     log(f"[DEBUG] {len(links)} links recolhidos.")
     if not links:
-        contar_seletores(driver)
+        # Pequeno diagnóstico para veres os seletores
+        try:
+            counts = {
+                "dbsr a": len(driver.find_elements(By.XPATH, "//div[contains(@class,'dbsr')]//a[@href]")),
+                "a[.//h3]": len(driver.find_elements(By.XPATH, "//a[.//h3][@href]")),
+                "a[.//div[@role='heading']]": len(driver.find_elements(By.XPATH, "//a[.//div[@role='heading']][@href]")),
+                "heading n0jPhd": len(driver.find_elements(By.XPATH, "//div[@role='heading' and contains(@class,'n0jPhd')]")),
+                "all anchors": len(driver.find_elements(By.XPATH, "//a[@href]")),
+            }
+            log(f"[DEBUG] Contagens seletores: {counts}")
+        except Exception:
+            pass
         save_shot(driver, f"no_results_serp_{int(time.time())}.png")
         save_html(driver, f"no_results_serp_{int(time.time())}.html")
     return links
 
-def resolve_visit_href(href):
-    try:
-        if href.startswith("/"):
-            return urljoin("https://www.google.com", href)
-        return href
-    except Exception:
-        return href
-
+# -------------------------------------------------------------
+# Visitar links e voltar
+# -------------------------------------------------------------
 def visitar_links(driver, links, keyword, resultados):
     log(f"[DEBUG] A visitar {len(links)} links...")
     results_url = driver.current_url
     for href_google, data_pub in links:
         try:
-            # Tentar clicar o mesmo <a> do SERP
+            # localizar <a> pelo href exato
             try:
                 link_element = WebDriverWait(driver, 8).until(
                     EC.element_to_be_clickable((By.XPATH, f"//a[@href='{href_google}']"))
                 )
             except Exception:
-                # fallback: starts-with
+                # tentar starts-with (tracking muda parâmetros)
                 try:
                     base = href_google.split("&")[0].replace("'", "\\'")
                     link_element = WebDriverWait(driver, 5).until(
@@ -425,22 +511,22 @@ def visitar_links(driver, links, keyword, resultados):
                     link_element = None
 
             if link_element is None:
-                # abrir diretamente (resolve /url relativo)
-                open_url_with_timeout(driver, resolve_visit_href(href_google), soft_wait=1.2)
+                # abrir diretamente (resolve /url relativo implicitamente)
+                open_url_with_timeout(driver, normalize_google_href(href_google), soft_wait=1.2)
             else:
                 driver.execute_script("arguments[0].scrollIntoView({block:'center'});", link_element)
-                time.sleep(0.4)
+                time.sleep(0.5)
                 if not try_click(driver, link_element, prefix="abrir_artigo"):
-                    driver.execute_script("window.location = arguments[0];", resolve_visit_href(href_google))
+                    driver.execute_script("window.location = arguments[0];", normalize_google_href(href_google))
                 time.sleep(1.6)
 
-            # Cookies do site
+            # cookies do site
             try:
                 aceitar_cookies_se_existem(driver, prefix="site_cookie")
             except Exception:
                 pass
 
-            # Recolher conteúdo
+            # recolha
             corpo = ""
             try:
                 artigos = driver.find_elements(By.TAG_NAME, "article")
@@ -476,7 +562,7 @@ def visitar_links(driver, links, keyword, resultados):
                 "erro": str(e)
             })
         finally:
-            # Voltar à SERP
+            # Voltar ao SERP
             try:
                 driver.back()
                 time.sleep(1.2)
@@ -486,6 +572,9 @@ def visitar_links(driver, links, keyword, resultados):
                 except Exception:
                     pass
 
+# -------------------------------------------------------------
+# Próxima página (preferir click; fallback por parâmetro)
+# -------------------------------------------------------------
 def proxima_pagina(driver):
     log("[DEBUG] Próxima página...")
     try:
@@ -495,6 +584,8 @@ def proxima_pagina(driver):
             return True
     except Exception:
         pass
+
+    # Fallback por URL (parâmetro start)
     try:
         parsed = urlparse(driver.current_url)
         qs = dict([kv for kv in [p.split("=",1) if "=" in p else (p,"") for p in parsed.query.split("&") if p]])
@@ -507,10 +598,13 @@ def proxima_pagina(driver):
     except Exception:
         return False
 
+# -------------------------------------------------------------
+# Execução principal (fluxo original + coleta robusta)
+# -------------------------------------------------------------
 def executar_scraper_google(keyword, filtro_tempo):
-    log("[DEBUG] A iniciar o scraper do Google (fluxo original com coleta robusta).")
+    log("[DEBUG] A iniciar o scraper do Google (fluxo original com coleta deep).")
     options = uc.ChromeOptions()
-    # Dica: para testar visualmente, comenta a linha headless abaixo
+    # Para testar visualmente, comenta a linha headless abaixo
     options.add_argument("--headless=new")
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1366,768")
@@ -539,9 +633,6 @@ def executar_scraper_google(keyword, filtro_tempo):
             save_shot(driver, f"no_news_tab_{int(time.time())}.png")
             save_html(driver, f"no_news_tab_{int(time.time())}.html")
             return resultados
-
-        # Simplificar markup
-        forcar_udm14(driver)
 
         aplicar_filtro_tempo(driver, filtro_tempo)
         clicar_linguagem(driver)
