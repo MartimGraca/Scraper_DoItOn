@@ -10,18 +10,18 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver import ActionChains
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, WebDriverException, StaleElementReferenceException
+from selenium.common.exceptions import TimeoutException, WebDriverException
 
 # Configs
-HEADLESS = True                   # Corre invisível
+HEADLESS = True
 SCREENSHOT_DIR = "fotos_erros"
 LOG_FILE = os.path.join(SCREENSHOT_DIR, "scraper.log")
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
-MAX_PAGES = 5                     # Máximo de páginas de resultados
-PAGELOAD_TIMEOUT = 25             # Timeout por navegação
+MAX_PAGES = 5
+PAGELOAD_TIMEOUT = 25
 SCRIPT_TIMEOUT = 20
-ARTICLE_SOFT_WAIT = 3             # Pequena respiração após abrir artigo
-EXCLUIR_DOMINIOS_BR = False       # Opcional: exclui domínios .br se True
+ARTICLE_SOFT_WAIT = 3
+EXCLUIR_DOMINIOS_BR = False  # põe True se quiseres excluir .br
 
 # -------------------- Utilitários --------------------
 def ensure_dirs():
@@ -72,7 +72,7 @@ def wait_ready_quick(driver, timeout=10):
         time.sleep(0.2)
     return False
 
-# -------------------- Cliques de apoio (cookies) --------------------
+# -------------------- Cliques (cookies) --------------------
 def try_click_strategies(driver, element, prefix="click"):
     ts = int(time.time())
     try:
@@ -204,40 +204,26 @@ def aceitar_cookies_se_existem(driver, screenshot_prefix="cookies"):
         log(f"[ERRO aceitar_cookies]: {e}")
         return False
 
-# -------------------- Pesquisa por URL --------------------
-def map_time_filter(filtro_tempo: str) -> str:
-    if not filtro_tempo:
-        return ""
+# -------------------- Pesquisa por URL (tbm=nws) --------------------
+def map_time_filter_qdr(filtro_tempo: str) -> str:
+    if not filtro_tempo: return ""
     f = filtro_tempo.strip().lower()
-    if "hora" in f:
-        return "h"      # última hora
-    if "24" in f or "dia" in f:
-        return "d"      # últimas 24 horas
-    if "semana" in f:
-        return "w"
-    if "mês" in f or "mes" in f:
-        return "m"
-    if "ano" in f:
-        return "y"
+    if "hora" in f: return "h"
+    if "24" in f or "dia" in f: return "d"
+    if "semana" in f: return "w"
+    if "mês" in f or "mes" in f: return "m"
+    if "ano" in f: return "y"
     return ""
 
-def build_google_news_url(keyword: str, filtro_tempo: str, hl="pt-PT", gl="pt", lr=None) -> str:
-    # lr=None por defeito (demasiado restritivo pode dar 0 resultados)
+def build_google_news_search_url(keyword: str, filtro_tempo: str, hl="pt-PT", gl="pt", lr=None) -> str:
     q = quote_plus(keyword)
-    qdr = map_time_filter(filtro_tempo)
-    params = {
-        "q": q,
-        "tbm": "nws",
-        "hl": hl,
-        "gl": gl,
-    }
-    if lr:
-        params["lr"] = lr
-    if qdr:
-        params["tbs"] = f"qdr:{qdr}"
+    qdr = map_time_filter_qdr(filtro_tempo)
+    params = {"q": q, "tbm": "nws", "hl": hl, "gl": gl}
+    if lr: params["lr"] = lr  # por defeito None para não restringir demasiado
+    if qdr: params["tbs"] = f"qdr:{qdr}"
     return "https://www.google.com/search?" + urlencode(params)
 
-def get_next_results_page_url(current_url: str) -> str | None:
+def next_page_url(current_url: str) -> str | None:
     try:
         parsed = urlparse(current_url)
         qs = parse_qs(parsed.query)
@@ -248,102 +234,19 @@ def get_next_results_page_url(current_url: str) -> str | None:
     except Exception:
         return None
 
-def extract_final_url(possible_google_url: str) -> str:
+def extract_final_url(href: str) -> str:
     try:
-        parsed = urlparse(possible_google_url)
+        parsed = urlparse(href)
         if "google." in parsed.netloc and parsed.path == "/url":
             qs = parse_qs(parsed.query)
             for key in ("url", "q"):
                 if key in qs and qs[key]:
                     return unquote(qs[key][0])
-        return possible_google_url
+        return href
     except Exception:
-        return possible_google_url
+        return href
 
-# -------------------- Coleta e visita --------------------
-def coletar_links_noticias(driver):
-    log("[DEBUG] A recolher links das notícias...")
-    links = []
-    seen = set()
-
-    # Espera container #search
-    try:
-        WebDriverWait(driver, 12).until(EC.presence_of_element_located((By.ID, "search")))
-    except Exception:
-        pass
-    time.sleep(0.3)
-
-    # Estratégias (mais comuns primeiro)
-    strategies = [
-        ("css", "div.dbsr a"),                                         # markup clássico de notícias
-        ("xpath", "//div[@id='search']//a[.//h3]"),                    # anchor com h3
-        ("xpath", "//div[@id='search']//a[.//div[@role='heading']]"),  # anchor com role=heading
-        ("css", "a.WlydOe"),                                          # outro seletor frequente
-        ("css", "div#search a[href^='http']"),                         # fallback
-    ]
-
-    for kind, sel in strategies:
-        try:
-            elems = driver.find_elements(By.CSS_SELECTOR, sel) if kind == "css" else driver.find_elements(By.XPATH, sel)
-        except Exception:
-            elems = []
-        for a in elems:
-            try:
-                href = a.get_attribute("href") or ""
-                if not href.startswith("http"):
-                    continue
-                final_href = extract_final_url(href)
-                if not final_href.startswith("http"):
-                    continue
-                dom = urlparse(final_href).netloc.lower()
-                # excluir links internos do google e duplicados
-                if "google." in dom or "webcache.googleusercontent" in dom:
-                    continue
-                if EXCLUIR_DOMINIOS_BR and dom.endswith(".br"):
-                    continue
-                if final_href in seen:
-                    continue
-
-                # tenta extrair data próxima
-                data_text = "N/D"
-                try:
-                    container = a
-                    try:
-                        container = a.find_element(By.XPATH, "./ancestor::*[self::div or self::article][1]")
-                    except Exception:
-                        pass
-                    spans = container.find_elements(By.XPATH, ".//span")
-                    for s in spans:
-                        t = s.text.strip()
-                        # heurística parecida com a tua lógica antiga
-                        if re.match(r"^há\s+\d+\s+(minuto|hora|dia|semana|m[eê]s|ano)s?$", t, flags=re.IGNORECASE):
-                            data_text = t
-                            break
-                        if re.match(r"^\d{2}/\d{2}/\d{4}$", t):
-                            data_text = t
-                            break
-                        if re.search(r"\d", t) and any(w in t.lower() for w in ("há", "min", "hora", "dia", "semana", "mês", "mes", "ano")):
-                            data_text = t
-                            break
-                except Exception:
-                    pass
-
-                seen.add(final_href)
-                links.append((final_href, data_text))
-            except StaleElementReferenceException:
-                continue
-            except Exception:
-                continue
-
-        if links:
-            break  # já apanhou via um seletor; segue
-
-    log(f"[DEBUG] {len(links)} links recolhidos.")
-    if not links:
-        save_shot(driver, f"no_results_{int(time.time())}.png")
-        save_html(driver, f"no_results_{int(time.time())}.html")
-    return links
-
+# -------------------- Navegação --------------------
 def open_url_with_timeout(driver, url, timeout=PAGELOAD_TIMEOUT, soft_wait=ARTICLE_SOFT_WAIT):
     driver.set_page_load_timeout(timeout)
     try:
@@ -362,6 +265,134 @@ def open_url_with_timeout(driver, url, timeout=PAGELOAD_TIMEOUT, soft_wait=ARTIC
     wait_ready_quick(driver, timeout=min(soft_wait, 8))
     time.sleep(max(0.2, soft_wait - 1))
 
+# -------------------- Coleta robusta via JS (tbm=nws) --------------------
+def collect_links_tbm_nws_js(driver):
+    """
+    Coleta robusta de links em tbm=nws:
+    - .dbsr cards
+    - anchors que contêm h3
+    - anchors que contêm [role=heading]
+    - classes frequentes WlydOe, tHmfQe
+    - fallback anchors http dentro de #search
+    Resolve /url? e remove google links/duplicados.
+    """
+    js = r"""
+    (function(){
+      function extractFinal(u){
+        try{
+          const p = new URL(u, location.href);
+          if (p.hostname.includes('google.') && p.pathname === '/url'){
+            const v = p.searchParams.get('url') || p.searchParams.get('q');
+            if (v) return decodeURIComponent(v);
+          }
+          return p.href;
+        }catch(e){ return u; }
+      }
+
+      // candidatos por prioridade
+      const sets = [];
+      sets.push(Array.from(document.querySelectorAll("div#search div.dbsr a[href]")));
+      sets.push(Array.from(document.querySelectorAll("div#search a:has(h3)")));
+      sets.push(Array.from(document.querySelectorAll("div#search a:has([role='heading'])")));
+      sets.push(Array.from(document.querySelectorAll("div#search a.WlydOe[href]")));
+      sets.push(Array.from(document.querySelectorAll("div#search a.tHmfQe[href]")));
+      sets.push(Array.from(document.querySelectorAll("div#search a[href^='http']")));
+
+      const seen = new Set();
+      for (const arr of sets){
+        const out = [];
+        for (const a of arr){
+          try{
+            const href = a.getAttribute('href') || '';
+            if (!href || !href.startsWith('http')) continue;
+            const finalHref = extractFinal(href);
+            if (!finalHref.startsWith('http')) continue;
+            const host = (new URL(finalHref)).hostname.toLowerCase();
+            if (host.includes('google.') || host.includes('webcache.googleusercontent')) continue;
+            if (seen.has(finalHref)) continue;
+            seen.add(finalHref);
+
+            // heurística de data próxima
+            let dataText = "N/D";
+            try{
+              let container = a.closest('div,article') || a;
+              const spans = container.querySelectorAll('span,time');
+              for (const s of spans){
+                const t = (s.getAttribute('aria-label') || s.textContent || '').trim();
+                if (!t) continue;
+                const low = t.toLowerCase();
+                if (/^há\s+\d+\s+(minuto|hora|dia|semana|m[eê]s|ano)s?$/i.test(t)) { dataText = t; break; }
+                if (/\d/.test(t) && (low.includes('há')||low.includes('min')||low.includes('hora')||low.includes('dia')||low.includes('semana')||low.includes('mês')||low.includes('mes')||low.includes('ano'))) { dataText = t; break; }
+                if (/^\d{2}\/\d{2}\/\d{4}$/.test(t)) { dataText = t; break; }
+              }
+            }catch(e){}
+            out.push([finalHref, dataText]);
+          }catch(e){}
+        }
+        if (out.length) return out; // devolve à primeira lista com resultados
+      }
+      return [];
+    })();
+    """
+    try:
+        results = driver.execute_script(js)
+        if not results:
+            return []
+        # results é lista de [href, data]
+        cleaned = []
+        seen = set()
+        for href, data_text in results:
+            try:
+                dom = urlparse(href).netloc.lower()
+                if EXCLUIR_DOMINIOS_BR and dom.endswith(".br"):
+                    continue
+                if href in seen:
+                    continue
+                seen.add(href)
+                cleaned.append((href, data_text or "N/D"))
+            except Exception:
+                continue
+        return cleaned
+    except Exception as e:
+        log(f"[ERRO JS coleta]: {e}")
+        return []
+
+def coletar_links_tbm_nws(driver):
+    log("[DEBUG] A recolher links (tbm=nws, robusto JS + scroll)...")
+    links = []
+    # espera container
+    try:
+        WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "search")))
+    except Exception:
+        pass
+
+    # até 5 ciclos: coleta + scroll + pausa
+    last_len = -1
+    for i in range(5):
+        batch = collect_links_tbm_nws_js(driver)
+        if batch:
+            links = batch
+            break
+        # scroll para tentar carregar blocos
+        try:
+            driver.execute_script("window.scrollBy(0, Math.max(600, window.innerHeight*0.8));")
+        except Exception:
+            pass
+        time.sleep(0.6)
+        # pequena pausa adicional
+        time.sleep(0.4)
+        # proteção contra loops vazios
+        if len(batch) == last_len:
+            time.sleep(0.5)
+        last_len = len(batch)
+
+    log(f"[DEBUG] {len(links)} links recolhidos (tbm=nws).")
+    if not links:
+        save_shot(driver, f"no_results_tbm_{int(time.time())}.png")
+        save_html(driver, f"no_results_tbm_{int(time.time())}.html")
+    return links
+
+# -------------------- Visitar artigos --------------------
 def visitar_links_mesma_aba(driver, links, keyword, resultados):
     log(f"[DEBUG] A visitar {len(links)} links na MESMA aba...")
     results_url_for_return = driver.current_url
@@ -373,7 +404,7 @@ def visitar_links_mesma_aba(driver, links, keyword, resultados):
                 aceitar_cookies_se_existem(driver, screenshot_prefix="site_cookie")
             except Exception:
                 pass
-            # Extrair corpo
+            # recolha conteúdo
             corpo = ""
             try:
                 artigos = driver.find_elements(By.TAG_NAME, "article")
@@ -409,7 +440,7 @@ def visitar_links_mesma_aba(driver, links, keyword, resultados):
                 "erro": str(e)
             })
         finally:
-            # Regressa SEM back() — sempre por URL
+            # regressar por URL (sem back)
             try:
                 open_url_with_timeout(driver, results_url_for_return, timeout=PAGELOAD_TIMEOUT, soft_wait=2)
             except Exception as e:
@@ -422,9 +453,8 @@ def visitar_links_mesma_aba(driver, links, keyword, resultados):
 
 # -------------------- Execução --------------------
 def executar_scraper_google(keyword, filtro_tempo):
-    log("[DEBUG] A iniciar o scraper do Google (headless, sem interagir com input).")
+    log("[DEBUG] A iniciar o scraper do Google (headless, tbm=nws apenas).")
     options = uc.ChromeOptions()
-    # Headless por flags (nunca usar options.headless)
     options.add_argument("--headless=new")
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1366,768")
@@ -435,10 +465,7 @@ def executar_scraper_google(keyword, filtro_tempo):
     options.add_argument("--disable-extensions")
     options.add_argument("--remote-allow-origins=*")
     options.add_argument(f"--user-agent={USER_AGENT}")
-    # Nota: sem pageLoadStrategy=none aqui para evitar racing/stale em headless
 
-    # Se precisares de fixar versão principal como no localhost:
-    # driver = uc.Chrome(options=options, version_main=137)
     driver = uc.Chrome(options=options)
     driver.set_page_load_timeout(PAGELOAD_TIMEOUT)
     driver.set_script_timeout(SCRIPT_TIMEOUT)
@@ -450,37 +477,28 @@ def executar_scraper_google(keyword, filtro_tempo):
         open_url_with_timeout(driver, "https://www.google.com/ncr", timeout=PAGELOAD_TIMEOUT, soft_wait=2)
         aceitar_cookies_se_existem(driver, screenshot_prefix="google_cookies_ncr")
 
-        # Ir diretamente para resultados (tbm=nws) com filtro de tempo
-        start_url = build_google_news_url(keyword, filtro_tempo, hl="pt-PT", gl="pt", lr=None)
-        log(f"[DEBUG] Start URL: {start_url}")
+        # Abrir tbm=nws com filtro qdr
+        start_url = build_google_news_search_url(keyword, filtro_tempo, hl="pt-PT", gl="pt", lr=None)
+        log(f"[DEBUG] Start URL (tbm=nws): {start_url}")
         open_url_with_timeout(driver, start_url, timeout=PAGELOAD_TIMEOUT, soft_wait=2)
         aceitar_cookies_se_existem(driver, screenshot_prefix="google_cookies")
 
         page_count = 0
         while True:
             page_count += 1
-            # Recolha
-            # Tentativa com retries leves para contornar variações de markup
-            attempt = 0
-            links = []
-            while attempt < 3 and not links:
-                links = coletar_links_noticias(driver)
-                if not links:
-                    time.sleep(1.0)
-                attempt += 1
-
+            links = coletar_links_tbm_nws(driver)
             if links:
                 visitar_links_mesma_aba(driver, links, keyword, resultados)
 
             if page_count >= MAX_PAGES:
-                log("[DEBUG] Limite de páginas atingido.")
+                log("[DEBUG] Limite de páginas atingido (tbm=nws).")
                 break
 
-            next_url = get_next_results_page_url(driver.current_url)
-            if not next_url:
-                log("[DEBUG] Sem próxima página.")
+            nxt = next_page_url(driver.current_url)
+            if not nxt:
+                log("[DEBUG] Sem próxima página (tbm=nws).")
                 break
-            open_url_with_timeout(driver, next_url, timeout=PAGELOAD_TIMEOUT, soft_wait=2)
+            open_url_with_timeout(driver, nxt, timeout=PAGELOAD_TIMEOUT, soft_wait=2)
             time.sleep(0.2)
     finally:
         try:
@@ -504,7 +522,7 @@ def rodar_scraper_sequencial(keywords_string, filtro_tempo):
 
 if __name__ == "__main__":
     ensure_dirs()
-    log("Script iniciado (headless, sem input).")
+    log("Script iniciado (headless, tbm=nws apenas).")
     keywords = input("Palavras-chave separadas por vírgula: ")
     filtro_tempo = input("Filtro de tempo (ex: 'Última hora', 'Últimas 24 horas', 'Última semana', 'Último mês', 'Último ano'): ")
     resultados = rodar_scraper_sequencial(keywords, filtro_tempo)
