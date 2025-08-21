@@ -13,15 +13,15 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, WebDriverException
 
 # Configs
-HEADLESS = True
 SCREENSHOT_DIR = "fotos_erros"
 LOG_FILE = os.path.join(SCREENSHOT_DIR, "scraper.log")
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
 MAX_PAGES = 5
 PAGELOAD_TIMEOUT = 25
 SCRIPT_TIMEOUT = 20
 ARTICLE_SOFT_WAIT = 3
-EXCLUIR_DOMINIOS_BR = False  # põe True se quiseres excluir .br
+EXCLUIR_DOMINIOS_BR = False   # Define True se quiseres excluir .br
+USE_UDM14 = False             # Opcional: força markup mais estável; mantém False para já
 
 # -------------------- Utilitários --------------------
 def ensure_dirs():
@@ -219,8 +219,10 @@ def build_google_news_search_url(keyword: str, filtro_tempo: str, hl="pt-PT", gl
     q = quote_plus(keyword)
     qdr = map_time_filter_qdr(filtro_tempo)
     params = {"q": q, "tbm": "nws", "hl": hl, "gl": gl}
-    if lr: params["lr"] = lr  # por defeito None para não restringir demasiado
+    if lr: params["lr"] = lr  # cuidado: restringe resultados
     if qdr: params["tbs"] = f"qdr:{qdr}"
+    if USE_UDM14:
+        params["udm"] = "14"
     return "https://www.google.com/search?" + urlencode(params)
 
 def next_page_url(current_url: str) -> str | None:
@@ -233,18 +235,6 @@ def next_page_url(current_url: str) -> str | None:
         return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
     except Exception:
         return None
-
-def extract_final_url(href: str) -> str:
-    try:
-        parsed = urlparse(href)
-        if "google." in parsed.netloc and parsed.path == "/url":
-            qs = parse_qs(parsed.query)
-            for key in ("url", "q"):
-                if key in qs and qs[key]:
-                    return unquote(qs[key][0])
-        return href
-    except Exception:
-        return href
 
 # -------------------- Navegação --------------------
 def open_url_with_timeout(driver, url, timeout=PAGELOAD_TIMEOUT, soft_wait=ARTICLE_SOFT_WAIT):
@@ -265,61 +255,62 @@ def open_url_with_timeout(driver, url, timeout=PAGELOAD_TIMEOUT, soft_wait=ARTIC
     wait_ready_quick(driver, timeout=min(soft_wait, 8))
     time.sleep(max(0.2, soft_wait - 1))
 
-# -------------------- Coleta robusta via JS (tbm=nws) --------------------
+# -------------------- Coleta robusta (corrige /url? relativo) --------------------
 def collect_links_tbm_nws_js(driver):
     """
-    Coleta robusta de links em tbm=nws:
-    - .dbsr cards
-    - anchors que contêm h3
-    - anchors que contêm [role=heading]
-    - classes frequentes WlydOe, tHmfQe
-    - fallback anchors http dentro de #search
-    Resolve /url? e remove google links/duplicados.
+    Coleta em todo o documento:
+      - div.dbsr a, g-card a, anchors com h3, anchors com [role=heading], anchors com classes WlydOe/tHmfQe
+      - fallback: todos os anchors visíveis
+    Aceita href relativos '/url?...' e resolve para o destino final (param url/q), removendo domínios google.* e duplicados.
     """
     js = r"""
     (function(){
-      function extractFinal(u){
+      function isVisible(el){
         try{
-          const p = new URL(u, location.href);
-          if (p.hostname.includes('google.') && p.pathname === '/url'){
-            const v = p.searchParams.get('url') || p.searchParams.get('q');
+          const rect = el.getBoundingClientRect();
+          const style = window.getComputedStyle(el);
+          return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+        }catch(e){ return false; }
+      }
+      function normalizeHref(href){
+        try{
+          // resolve relativo para absoluto
+          const u = new URL(href, location.origin);
+          // Se for /url do Google, extrair destino
+          if ((u.hostname.includes('google.') || u.hostname.endsWith('.google.com')) && u.pathname === '/url'){
+            const v = u.searchParams.get('url') || u.searchParams.get('q');
             if (v) return decodeURIComponent(v);
           }
-          return p.href;
-        }catch(e){ return u; }
+          return u.href;
+        }catch(e){
+          return '';
+        }
       }
-
-      // candidatos por prioridade
-      const sets = [];
-      sets.push(Array.from(document.querySelectorAll("div#search div.dbsr a[href]")));
-      sets.push(Array.from(document.querySelectorAll("div#search a:has(h3)")));
-      sets.push(Array.from(document.querySelectorAll("div#search a:has([role='heading'])")));
-      sets.push(Array.from(document.querySelectorAll("div#search a.WlydOe[href]")));
-      sets.push(Array.from(document.querySelectorAll("div#search a.tHmfQe[href]")));
-      sets.push(Array.from(document.querySelectorAll("div#search a[href^='http']")));
-
-      const seen = new Set();
-      for (const arr of sets){
+      function collectFrom(nodes){
         const out = [];
-        for (const a of arr){
+        const seen = new Set();
+        for(const a of nodes){
           try{
-            const href = a.getAttribute('href') || '';
-            if (!href || !href.startsWith('http')) continue;
-            const finalHref = extractFinal(href);
-            if (!finalHref.startsWith('http')) continue;
+            if(!isVisible(a)) continue;
+            const raw = a.getAttribute('href') || '';
+            if(!raw) continue;
+            // aceitar http(s) e relativos '/url?...'
+            if(!(raw.startsWith('http') || raw.startsWith('/url'))) continue;
+            const finalHref = normalizeHref(raw);
+            if(!finalHref || !finalHref.startsWith('http')) continue;
             const host = (new URL(finalHref)).hostname.toLowerCase();
             if (host.includes('google.') || host.includes('webcache.googleusercontent')) continue;
-            if (seen.has(finalHref)) continue;
+            if(seen.has(finalHref)) continue;
             seen.add(finalHref);
 
-            // heurística de data próxima
+            // data próxima (span/time perto do link)
             let dataText = "N/D";
             try{
-              let container = a.closest('div,article') || a;
-              const spans = container.querySelectorAll('span,time');
-              for (const s of spans){
+              const container = a.closest('div,article,section,span') || a;
+              const spans = container.querySelectorAll('time, span');
+              for(const s of spans){
                 const t = (s.getAttribute('aria-label') || s.textContent || '').trim();
-                if (!t) continue;
+                if(!t) continue;
                 const low = t.toLowerCase();
                 if (/^há\s+\d+\s+(minuto|hora|dia|semana|m[eê]s|ano)s?$/i.test(t)) { dataText = t; break; }
                 if (/\d/.test(t) && (low.includes('há')||low.includes('min')||low.includes('hora')||low.includes('dia')||low.includes('semana')||low.includes('mês')||low.includes('mes')||low.includes('ano'))) { dataText = t; break; }
@@ -329,16 +320,55 @@ def collect_links_tbm_nws_js(driver):
             out.push([finalHref, dataText]);
           }catch(e){}
         }
-        if (out.length) return out; // devolve à primeira lista com resultados
+        return out;
+      }
+
+      // Roots candidatas (se existir #search/role=main, caso contrário body)
+      const roots = [];
+      const r1 = document.querySelector("#search");
+      const r2 = document.querySelector("[role='main']");
+      roots.push(r1 || r2 || document.body);
+
+      // Estratégias prioritárias
+      const selectors = [
+        "div.dbsr a[href]",
+        "g-card a[href]",
+        "a.WlydOe[href]",
+        "a.tHmfQe[href]",
+      ];
+
+      for(const root of roots){
+        // Passo 1: seletores típicos
+        for(const sel of selectors){
+          try{
+            const arr = Array.from(root.querySelectorAll(sel)).filter(isVisible);
+            const got = collectFrom(arr);
+            if(got.length) return got;
+          }catch(e){}
+        }
+        // Passo 2: anchors que contêm títulos
+        try{
+          const anchors = Array.from(root.querySelectorAll("a[href]")).filter(isVisible);
+          const withH3 = anchors.filter(a => !!a.querySelector("h3"));
+          const gotH3 = collectFrom(withH3);
+          if(gotH3.length) return gotH3;
+
+          const withHeading = anchors.filter(a => !!a.querySelector("[role='heading']"));
+          const gotHead = collectFrom(withHeading);
+          if(gotHead.length) return gotHead;
+        }catch(e){}
+        // Passo 3: fallback — todos os anchors visíveis no root
+        try{
+          const anchors = Array.from(root.querySelectorAll("a[href]")).filter(isVisible);
+          const gotAll = collectFrom(anchors);
+          if(gotAll.length) return gotAll;
+        }catch(e){}
       }
       return [];
     })();
     """
     try:
-        results = driver.execute_script(js)
-        if not results:
-            return []
-        # results é lista de [href, data]
+        results = driver.execute_script(js) or []
         cleaned = []
         seen = set()
         for href, data_text in results:
@@ -357,39 +387,62 @@ def collect_links_tbm_nws_js(driver):
         log(f"[ERRO JS coleta]: {e}")
         return []
 
-def coletar_links_tbm_nws(driver):
-    log("[DEBUG] A recolher links (tbm=nws, robusto JS + scroll)...")
-    links = []
-    # espera container
+def log_selector_counts(driver):
+    js_counts = r"""
+    (function(){
+      function count(sel){ try{ return document.querySelectorAll(sel).length; }catch(e){ return -1; } }
+      function visibleCount(sel){
+        try{
+          let c=0; document.querySelectorAll(sel).forEach(el=>{
+            const r=el.getBoundingClientRect(), st=getComputedStyle(el);
+            if(r.width>0 && r.height>0 && st.display!=='none' && st.visibility!=='hidden') c++;
+          }); return c;
+        }catch(e){ return -1; }
+      }
+      const data = {
+        "div.dbsr a[href]": count("div.dbsr a[href]"),
+        "g-card a[href]": count("g-card a[href]"),
+        "a.WlydOe[href]": count("a.WlydOe[href]"),
+        "a.tHmfQe[href]": count("a.tHmfQe[href]"),
+        "all anchors": count("a[href]"),
+        "visible anchors": visibleCount("a[href]"),
+      };
+      return data;
+    })();
+    """
     try:
-        WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "search")))
+        counts = driver.execute_script(js_counts)
+        log(f"[DEBUG] Contagens de seletores: {counts}")
+    except Exception as e:
+        log(f"[DEBUG] Falha a obter contagens: {e}")
+
+def coletar_links_tbm_nws(driver):
+    log("[DEBUG] A recolher links (tbm=nws, JS global; aceita '/url?...')...")
+    # pequena espera
+    try:
+        WebDriverWait(driver, 8).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
     except Exception:
         pass
 
-    # até 5 ciclos: coleta + scroll + pausa
-    last_len = -1
-    for i in range(5):
+    links = []
+    for i in range(6):
         batch = collect_links_tbm_nws_js(driver)
         if batch:
             links = batch
             break
-        # scroll para tentar carregar blocos
+        # scroll incremental para forçar render
         try:
-            driver.execute_script("window.scrollBy(0, Math.max(600, window.innerHeight*0.8));")
+            driver.execute_script("window.scrollBy(0, Math.max(800, window.innerHeight*0.9));")
         except Exception:
             pass
-        time.sleep(0.6)
-        # pequena pausa adicional
-        time.sleep(0.4)
-        # proteção contra loops vazios
-        if len(batch) == last_len:
-            time.sleep(0.5)
-        last_len = len(batch)
+        time.sleep(0.9)
 
-    log(f"[DEBUG] {len(links)} links recolhidos (tbm=nws).")
     if not links:
+        log_selector_counts(driver)
         save_shot(driver, f"no_results_tbm_{int(time.time())}.png")
         save_html(driver, f"no_results_tbm_{int(time.time())}.html")
+
+    log(f"[DEBUG] {len(links)} links recolhidos (tbm=nws).")
     return links
 
 # -------------------- Visitar artigos --------------------
@@ -440,7 +493,6 @@ def visitar_links_mesma_aba(driver, links, keyword, resultados):
                 "erro": str(e)
             })
         finally:
-            # regressar por URL (sem back)
             try:
                 open_url_with_timeout(driver, results_url_for_return, timeout=PAGELOAD_TIMEOUT, soft_wait=2)
             except Exception as e:
@@ -464,6 +516,7 @@ def executar_scraper_google(keyword, filtro_tempo):
     options.add_argument("--log-level=2")
     options.add_argument("--disable-extensions")
     options.add_argument("--remote-allow-origins=*")
+    options.add_argument("--lang=pt-PT")
     options.add_argument(f"--user-agent={USER_AGENT}")
 
     driver = uc.Chrome(options=options)
@@ -477,7 +530,7 @@ def executar_scraper_google(keyword, filtro_tempo):
         open_url_with_timeout(driver, "https://www.google.com/ncr", timeout=PAGELOAD_TIMEOUT, soft_wait=2)
         aceitar_cookies_se_existem(driver, screenshot_prefix="google_cookies_ncr")
 
-        # Abrir tbm=nws com filtro qdr
+        # Abrir tbm=nws com qdr (sem lr por defeito)
         start_url = build_google_news_search_url(keyword, filtro_tempo, hl="pt-PT", gl="pt", lr=None)
         log(f"[DEBUG] Start URL (tbm=nws): {start_url}")
         open_url_with_timeout(driver, start_url, timeout=PAGELOAD_TIMEOUT, soft_wait=2)
