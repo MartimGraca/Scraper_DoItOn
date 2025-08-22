@@ -77,8 +77,6 @@ def open_url_with_timeout(driver, url, timeout=PAGELOAD_TIMEOUT, soft_wait=1.2):
             driver.execute_script("window.stop();")
         except Exception:
             pass
-        # deixamos seguir; página pode ter carregado parcialmente
-    # pequena “respiração”
     time.sleep(soft_wait)
 
 def try_click(driver, el, prefix="click"):
@@ -128,8 +126,6 @@ def try_click(driver, el, prefix="click"):
     return False
 
 def normalize_google_href(href, base="https://www.google.com"):
-    # Mantemos o href “do Google” para clicar no SERP (como no teu código).
-    # Apenas normalizamos relativo para absoluto para guardares/depurares se precisares.
     try:
         if href.startswith("/"):
             return urljoin(base, href)
@@ -138,39 +134,35 @@ def normalize_google_href(href, base="https://www.google.com"):
         return href
 
 # -------------------------------------------------------------
-# Helpers Google: tbm=nws e tbs=qdr (fallback por URL)
+# Fallbacks leves por URL (tbm=nws e tbs=qdr)
 # -------------------------------------------------------------
-def get_query_from_current_url(driver):
+def _get_current_query(driver):
     try:
         p = urlparse(driver.current_url)
         qs = parse_qs(p.query)
-        q = qs.get("q", [""])[0]
-        return q
+        return (qs.get("q", [""])[0] or "").strip()
     except Exception:
         return ""
 
-def ir_para_noticias_por_url(driver, keyword=None):
-    # Usa o q da URL atual, se existir; senão usa a keyword
-    q = get_query_from_current_url(driver) or (keyword or "")
+def ir_para_noticias_por_url(driver, keyword):
+    q = _get_current_query(driver) or (keyword or "")
     url = f"https://www.google.com/search?q={quote_plus(q)}&hl=pt-PT&gl=pt&tbm=nws"
     log("[DEBUG] A forçar 'Notícias' por URL (tbm=nws).")
     open_url_with_timeout(driver, url, soft_wait=1.0)
-    # esperar confirmar
+    # confirmação leve (sem blocos pesados)
     try:
-        WebDriverWait(driver, 8).until(
+        WebDriverWait(driver, 6).until(
             EC.any_of(
                 EC.url_contains("tbm=nws"),
-                EC.presence_of_element_located((By.XPATH, "//div[contains(@class,'dbsr')]//a[@href]")),
-                EC.presence_of_element_located((By.XPATH, "//a[.//h3][@href]")),
+                EC.presence_of_element_located((By.XPATH, "//a[.//h3][@href]"))
             )
         )
-        return True
     except Exception:
-        return False
+        pass
 
 def aplicar_filtro_tempo_por_url(driver, filtro_tempo):
     if not filtro_tempo:
-        return False
+        return
     t = filtro_tempo.strip().lower()
     code = None
     if "hora" in t: code = "h"
@@ -179,20 +171,17 @@ def aplicar_filtro_tempo_por_url(driver, filtro_tempo):
     elif "mês" in t or "mes" in t: code = "m"
     elif "ano" in t: code = "y"
     if not code:
-        log("[DEBUG] Filtro tempo: não reconhecido para URL.")
-        return False
+        return
     try:
         p = urlparse(driver.current_url)
         qs = parse_qs(p.query)
         qs["tbs"] = [f"qdr:{code}"]
-        newq = urlencode({k: v[0] if isinstance(v, list) else v for k, v in qs.items()})
+        newq = urlencode({k: (v[0] if isinstance(v, list) else v) for k, v in qs.items()})
         new_url = urlunparse((p.scheme, p.netloc, p.path, p.params, newq, p.fragment))
-        open_url_with_timeout(driver, new_url, soft_wait=1.0)
+        open_url_with_timeout(driver, new_url, soft_wait=0.8)
         log(f"[DEBUG] Filtro aplicado por URL: tbs=qdr:{code}")
-        return True
-    except Exception as e:
-        log(f"[ERRO aplicar_filtro_tempo_por_url]: {e}")
-        return False
+    except Exception:
+        pass
 
 # -------------------------------------------------------------
 # Cookies
@@ -282,60 +271,92 @@ def aceitar_cookies_se_existem(driver, prefix="cookies"):
 # Passos Google: pesquisa -> tab Notícias -> filtros -> linguagem
 # -------------------------------------------------------------
 def abrir_pesquisa_google(driver, keyword):
-    # Evita send_keys no input; abre resultados diretamente
+    # Pesquisa direta com query codificada (leve e estável)
     url = f"https://www.google.com/search?q={quote_plus(keyword)}&hl=pt-PT&gl=pt"
     open_url_with_timeout(driver, url, soft_wait=1.0)
     aceitar_cookies_se_existem(driver, prefix="google_cookies_search")
 
+def _esperar_entrar_em_noticias(driver, timeout=6):
+    try:
+        WebDriverWait(driver, timeout).until(
+            EC.any_of(
+                EC.url_contains("tbm=nws"),
+                EC.presence_of_element_located((By.XPATH, "//div[contains(@class,'dbsr')]//a[@href]")),
+                EC.presence_of_element_located((By.XPATH, "//a[.//h3][@href]")),
+            )
+        )
+        return True
+    except Exception:
+        return False
+
 def clicar_noticias_tab(driver):
     log("[DEBUG] A clicar no separador Notícias...")
-    try:
-        el = WebDriverWait(driver, 12).until(EC.element_to_be_clickable((By.XPATH, "//a[contains(@href,'tbm=nws')]")))
-        if try_click(driver, el, prefix="tab_noticias"):
-            # confirmar que entrou em notícias
-            try:
-                WebDriverWait(driver, 8).until(
-                    EC.any_of(
-                        EC.url_contains("tbm=nws"),
-                        EC.presence_of_element_located((By.XPATH, "//div[contains(@class,'dbsr')]//a[@href]")),
-                        EC.presence_of_element_located((By.XPATH, "//a[.//h3][@href]")),
-                    )
-                )
-                time.sleep(0.8)
-                return True
-            except Exception:
-                pass
-    except Exception as e:
-        log(f"[ERRO clicar_noticias_tab]: {e}")
-    # Tentativa extra por JS (classe que referiste)
+
+    # 1) Seletores habituais
+    selectors = [
+        "//a[contains(@href,'tbm=nws')]",
+        "//a[normalize-space()='Notícias']",
+        "//a[@aria-label='Notícias']",
+        "//div[@role='tablist']//a[normalize-space()='Notícias']",
+        "//a//span[normalize-space()='Notícias']/ancestor::a[1]",
+    ]
+    for xp in selectors:
+        try:
+            el = WebDriverWait(driver, 8).until(EC.element_to_be_clickable((By.XPATH, xp)))
+            if try_click(driver, el, prefix="tab_noticias_xpath"):
+                if _esperar_entrar_em_noticias(driver, timeout=6):
+                    return True
+        except Exception:
+            continue
+
+    # 2) JS direto no link com tbm=nws
     try:
         ok = driver.execute_script("""
-            var a = document.querySelector("a[href*='tbm=nws']"); 
-            if(a){ a.click(); return true; }
+            var a = document.querySelector("a[href*='tbm=nws']");
+            if(a){ a.click(); return true; } return false;
+        """)
+        if ok:
+            if _esperar_entrar_em_noticias(driver, timeout=6):
+                log("[DEBUG] Notícias clicado via JS querySelector tbm=nws.")
+                return True
+    except Exception:
+        pass
+
+    # 3) Classe que referiste
+    try:
+        ok = driver.execute_script("""
             var els = document.getElementsByClassName('sc-4ed1b0a0-5 gUqbJK');
             if(els && els.length){ try{ els[0].click(); return true; }catch(e){} }
             return false;
         """)
         if ok:
-            try:
-                WebDriverWait(driver, 8).until(
-                    EC.any_of(
-                        EC.url_contains("tbm=nws"),
-                        EC.presence_of_element_located((By.XPATH, "//div[contains(@class,'dbsr')]//a[@href]"))
-                    )
-                )
-                time.sleep(0.8)
+            if _esperar_entrar_em_noticias(driver, timeout=6):
+                log("[DEBUG] Notícias clicado via getElementsByClassName('sc-4ed1b0a0-5 gUqbJK').")
                 return True
-            except Exception:
-                pass
     except Exception:
         pass
+
+    # 4) JS por texto visível “Notícias”
+    try:
+        ok = driver.execute_script("""
+            var as = Array.from(document.querySelectorAll('a, button'));
+            var alvo = as.find(n => (n.textContent||'').trim().toLowerCase() === 'notícias');
+            if(alvo){ try{ alvo.click(); return true; }catch(e){} }
+            return false;
+        """)
+        if ok:
+            if _esperar_entrar_em_noticias(driver, timeout=6):
+                log("[DEBUG] Notícias clicado via texto visível (JS).")
+                return True
+    except Exception:
+        pass
+
+    log("[DEBUG] Não consegui clicar em 'Notícias' com os métodos disponíveis.")
     return False
 
 def aplicar_filtro_tempo(driver, filtro_tempo):
     if not filtro_tempo or not filtro_tempo.strip():
-        return True
-    ok = False
+        return
     log(f"[DEBUG] A aplicar filtro de tempo: {filtro_tempo}")
     try:
         btn_ferr = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.XPATH, "//div[normalize-space()='Ferramentas']")))
@@ -347,21 +368,22 @@ def aplicar_filtro_tempo(driver, filtro_tempo):
         time.sleep(0.8)
 
         itens = WebDriverWait(driver, 10).until(EC.presence_of_all_elements_located((By.XPATH, "//a[@role='menuitemradio']")))
+        alvo = None
         alvo_txt = filtro_tempo.strip().lower()
         for it in itens:
             try:
                 if alvo_txt in it.text.strip().lower():
-                    driver.execute_script("arguments[0].scrollIntoView({block:'center'});", it)
-                    time.sleep(0.3)
-                    driver.execute_script("arguments[0].click();", it)
-                    time.sleep(1.2)
-                    ok = True
+                    alvo = it
                     break
             except Exception:
                 continue
+        if alvo:
+            driver.execute_script("arguments[0].scrollIntoView({block:'center'});", alvo)
+            time.sleep(0.3)
+            driver.execute_script("arguments[0].click();", alvo)
+            time.sleep(1.2)
     except Exception as e:
         log(f"[ERRO filtro]: {e}")
-    return ok
 
 def clicar_linguagem(driver):
     log("[DEBUG] A tentar definir língua (se presente)...")
@@ -381,14 +403,14 @@ def clicar_linguagem(driver):
         log(f"[DEBUG] Linguagem: não aplicável/visível ({e})")
 
 # -------------------------------------------------------------
-# Coleta de links em tbm=nws (mantendo a tua regra + fallbacks leves)
+# Coleta de links em tbm=nws (tua regra + fallbacks leves)
 # -------------------------------------------------------------
 def coletar_links_noticias(driver, excluir_br=False):
     log("[DEBUG] A recolher links das notícias...")
     links = []
     raw_items = []
 
-    # Tua regra principal
+    # Regra principal
     try:
         blocos = WebDriverWait(driver, 12).until(
             EC.presence_of_all_elements_located((By.XPATH, "//div[@role='heading' and contains(@class,'n0jPhd')]"))
@@ -405,7 +427,7 @@ def coletar_links_noticias(driver, excluir_br=False):
     except Exception:
         pass
 
-    # Fallbacks suaves se a regra principal não apanhou nada
+    # Fallback leve
     if not raw_items:
         try:
             anchors = driver.find_elements(By.XPATH, "//a[.//div[@role='heading'] or .//h3]")
@@ -419,12 +441,11 @@ def coletar_links_noticias(driver, excluir_br=False):
         except Exception:
             pass
 
-    # Processar, filtrar e extrair datas como no teu
+    # Processar + datas
     for a_el, href in raw_items:
         try:
             parsed = urlparse(href)
             domain = parsed.netloc.lower()
-            # Alguns hrefs podem vir relativos "/url?..." — normalizar só para logging/visita direta
             if href.startswith("/"):
                 href = urljoin("https://www.google.com", href)
                 parsed = urlparse(href)
@@ -433,7 +454,6 @@ def coletar_links_noticias(driver, excluir_br=False):
             if excluir_br and domain.endswith(".br"):
                 continue
 
-            # data
             data_text = "N/D"
             try:
                 data_parent = a_el.find_element(By.XPATH, ".//ancestor::*[self::div or self::article][1]")
@@ -451,7 +471,6 @@ def coletar_links_noticias(driver, excluir_br=False):
             except Exception:
                 pass
 
-            # Guardamos o href “do Google” para clicar no SERP — tal como no teu código
             links.append((href, data_text))
         except Exception:
             continue
@@ -470,13 +489,11 @@ def visitar_links(driver, links, keyword, resultados):
     results_url = driver.current_url
     for href_google, data_pub in links:
         try:
-            # Clicar pelo href EXATO do SERP (com redirecionamento do Google)
             try:
                 link_element = WebDriverWait(driver, 8).until(
                     EC.element_to_be_clickable((By.XPATH, f"//a[@href='{href_google}']"))
                 )
             except Exception:
-                # fallback: procurar por starts-with (casos com parâmetros dinâmicos de tracking)
                 try:
                     link_element = WebDriverWait(driver, 5).until(
                         EC.element_to_be_clickable((By.XPATH, f"//a[starts-with(@href, '{href_google.split('&')[0]}')]"))
@@ -485,23 +502,19 @@ def visitar_links(driver, links, keyword, resultados):
                     link_element = None
 
             if link_element is None:
-                # fallback duro: abrir diretamente
                 open_url_with_timeout(driver, href_google, soft_wait=1.2)
             else:
                 driver.execute_script("arguments[0].scrollIntoView({block:'center'});", link_element)
                 time.sleep(0.5)
                 if not try_click(driver, link_element, prefix="abrir_artigo"):
-                    # se click falhar, abrir via location
                     driver.execute_script("window.location = arguments[0];", href_google)
                 time.sleep(2.0)
 
-            # Possíveis cookies do site
             try:
                 aceitar_cookies_se_existem(driver, prefix="site_cookie")
             except Exception:
                 pass
 
-            # Recolher conteúdo
             corpo = ""
             try:
                 artigos = driver.find_elements(By.TAG_NAME, "article")
@@ -537,7 +550,6 @@ def visitar_links(driver, links, keyword, resultados):
                 "erro": str(e)
             })
         finally:
-            # Voltar tal como no teu fluxo, mas com salvaguarda
             try:
                 driver.back()
                 time.sleep(1.5)
@@ -560,7 +572,6 @@ def proxima_pagina(driver):
     except Exception:
         pass
 
-    # Fallback por URL (parâmetro start)
     try:
         parsed = urlparse(driver.current_url)
         qs = dict([kv for kv in [p.split("=",1) if "=" in p else (p,"") for p in parsed.query.split("&") if p]])
@@ -578,7 +589,7 @@ def proxima_pagina(driver):
         return False
 
 # -------------------------------------------------------------
-# Execução principal (adaptação fiel à tua lógica) + fallbacks URL
+# Execução principal (fluxo original + fallbacks leves por URL)
 # -------------------------------------------------------------
 def executar_scraper_google(keyword, filtro_tempo):
     log("[DEBUG] A iniciar o scraper do Google (adaptação fiel).")
@@ -607,22 +618,17 @@ def executar_scraper_google(keyword, filtro_tempo):
 
         abrir_pesquisa_google(driver, keyword)
 
-        # 1) tenta clicar; 2) SE falhar, força tbm=nws por URL (não aborta o fluxo)
+        # Se o clique em Notícias falhar, força tbm=nws por URL (leve).
         if not clicar_noticias_tab(driver):
             log("[DEBUG] Tab Notícias não encontrada/clicável. A forçar por URL…")
-            if not ir_para_noticias_por_url(driver, keyword):
-                save_shot(driver, f"no_news_tab_{int(time.time())}.png")
-                save_html(driver, f"no_news_tab_{int(time.time())}.html")
-                # Mesmo que falhe a confirmação, ainda podemos tentar filtrar e coletar
-                # não fazemos return aqui
+            ir_para_noticias_por_url(driver, keyword)
 
-        # Filtro pela UI; se falhar, por URL
-        if not aplicar_filtro_tempo(driver, filtro_tempo):
-            aplicar_filtro_tempo_por_url(driver, filtro_tempo)
+        # Aplica filtro pela UI; se falhar, reforça por URL (leve).
+        aplicar_filtro_tempo(driver, filtro_tempo)
+        aplicar_filtro_tempo_por_url(driver, filtro_tempo)
 
         clicar_linguagem(driver)
 
-        # Esperar que existam headings de notícias ou resultados
         try:
             WebDriverWait(driver, 10).until(
                 EC.presence_of_element_located((By.XPATH, "//div[@role='heading']"))
@@ -630,18 +636,10 @@ def executar_scraper_google(keyword, filtro_tempo):
         except Exception:
             pass
 
-        # Loop de páginas
-        zero_streak = 0
         while True:
             links = coletar_links_noticias(driver, excluir_br=False)
             if links:
-                zero_streak = 0
                 visitar_links(driver, links, keyword, resultados)
-            else:
-                zero_streak += 1
-                if zero_streak >= 2:
-                    log("[DEBUG] Duas páginas seguidas sem links — a parar.")
-                    break
             if not proxima_pagina(driver):
                 break
     finally:
