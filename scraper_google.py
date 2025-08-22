@@ -8,7 +8,7 @@ from urllib.parse import urlparse, urlunparse, urljoin, parse_qs, urlencode, quo
 
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.common.keys import Keys as SeleniumKeys
 from selenium.webdriver import ActionChains
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -25,11 +25,12 @@ SCRIPT_TIMEOUT = 15
 WAIT_SHORT = 0.15
 
 # Limites/agressividade (podem ser ajustados por env)
-MAX_LINKS_PER_KEYWORD = int(os.getenv("MAX_LINKS_PER_KEYWORD", "10") or "10")
-MAX_PAGES_PER_KEYWORD = int(os.getenv("MAX_PAGES_PER_KEYWORD", "1") or "1")
+# Nota: MAX_PAGES_PER_KEYWORD por defeito agora é 3, para paginar corretamente.
+MAX_LINKS_PER_KEYWORD = int(os.getenv("MAX_LINKS_PER_KEYWORD", "10") or "10")   # total por keyword (todas as páginas)
+MAX_PAGES_PER_KEYWORD = int(os.getenv("MAX_PAGES_PER_KEYWORD", "3") or "3")     # número de páginas a percorrer
 MAX_SECONDS_PER_LINK = int(os.getenv("MAX_SECONDS_PER_LINK", "15") or "15")
-MAX_SECONDS_PER_KEYWORD = int(os.getenv("MAX_SECONDS_PER_KEYWORD", "0") or "0")  # 0 = sem limite
-FAST_MODE = int(os.getenv("FAST_MODE", "1") or "1")  # 1 = fazer tudo o mais rápido/curto possível
+MAX_SECONDS_PER_KEYWORD = int(os.getenv("MAX_SECONDS_PER_KEYWORD", "0") or "0")  # 0 = sem limite total
+FAST_MODE = int(os.getenv("FAST_MODE", "1") or "1")                               # 1 = fazer tudo o mais rápido/curto possível
 DO_NOT_ACCEPT_SITE_COOKIES = int(os.getenv("DO_NOT_ACCEPT_SITE_COOKIES", "1") or "1")  # 1 = não aceitar cookies nos sites
 RESULTS_JSONL_PATH = os.getenv("RESULTS_JSONL_PATH", "").strip()  # se vazio, acumula em memória
 
@@ -81,7 +82,6 @@ def open_url_with_timeout(driver, url, timeout=PAGELOAD_TIMEOUT, soft_wait=0.5):
     time.sleep(soft_wait)
 
 def try_click(driver, el, prefix="click"):
-    # Mantemos a util; mas vamos abrir artigos sempre por URL (ver visitar_links)
     try:
         driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
         time.sleep(WAIT_SHORT)
@@ -119,8 +119,6 @@ def try_click(driver, el, prefix="click"):
 # -------------------------------------------------------------
 # Cookies (Google apenas; sites destino opcionalmente ignorado)
 # -------------------------------------------------------------
-from selenium.webdriver.common.keys import Keys as SeleniumKeys
-
 def localizar_botao_por_textos(driver, textos, deadline=None):
     xps = []
     for t in textos:
@@ -162,7 +160,6 @@ def aceitar_cookies_google(driver, time_budget_s=3):
                 pass
             return True
 
-        # iframes (sem ultrapassar orçamento)
         if time.time() < deadline:
             iframes = driver.find_elements(By.TAG_NAME, "iframe")
             for i, fr in enumerate(iframes):
@@ -184,7 +181,6 @@ def aceitar_cookies_google(driver, time_budget_s=3):
                 except Exception:
                     driver.switch_to.default_content()
 
-        # JS direto (rápido)
         for sel in [
             "button[aria-label='Accept all']",
             "button[aria-label*='accept' i]",
@@ -227,7 +223,7 @@ def abrir_pesquisa_google(driver, keyword):
         pass
 
 # -------------------------------------------------------------
-# Filtro de tempo: só por URL (removida tentativa via UI)
+# Filtro de tempo: só por URL (sem UI)
 # -------------------------------------------------------------
 def aplicar_filtro_tempo_por_url(driver, filtro_tempo):
     t = (filtro_tempo or "").strip().lower()
@@ -251,12 +247,13 @@ def aplicar_filtro_tempo_por_url(driver, filtro_tempo):
         pass
 
 # -------------------------------------------------------------
-# Recolha de links
+# Recolha de links (ordem garantida por posição vertical)
 # -------------------------------------------------------------
 def coletar_links_noticias(driver, excluir_br=False):
     log("[DEBUG] A recolher links das notícias...")
-    links = []
     raw_items = []
+
+    # Principal: headings de notícias
     try:
         blocos = WebDriverWait(driver, 8).until(
             EC.presence_of_all_elements_located((By.XPATH, "//div[@role='heading' and contains(@class,'n0jPhd')]"))
@@ -266,12 +263,14 @@ def coletar_links_noticias(driver, excluir_br=False):
                 a_el = bloco.find_element(By.XPATH, ".//ancestor::a[1]")
                 href = a_el.get_attribute("href") or ""
                 if href:
-                    raw_items.append((a_el, href))
+                    y = a_el.location.get("y", 0)
+                    raw_items.append((a_el, href, y))
             except Exception:
                 continue
     except Exception:
         pass
 
+    # Fallback
     if not raw_items:
         try:
             anchors = driver.find_elements(By.XPATH, "//a[.//div[@role='heading'] or .//h3]")
@@ -279,13 +278,18 @@ def coletar_links_noticias(driver, excluir_br=False):
                 try:
                     href = a_el.get_attribute("href") or ""
                     if href:
-                        raw_items.append((a_el, href))
+                        y = a_el.location.get("y", 0)
+                        raw_items.append((a_el, href, y))
                 except Exception:
                     continue
         except Exception:
             pass
 
-    for a_el, href in raw_items:
+    # Ordenar por posição vertical (topo -> base)
+    raw_items.sort(key=lambda t: t[2])
+
+    links = []
+    for a_el, href, _y in raw_items:
         try:
             if href.startswith("/"):
                 href = urljoin("https://www.google.com", href)
@@ -313,9 +317,6 @@ def coletar_links_noticias(driver, excluir_br=False):
             links.append((href, data_text))
         except Exception:
             continue
-
-    if MAX_LINKS_PER_KEYWORD and len(links) > MAX_LINKS_PER_KEYWORD:
-        links = links[:MAX_LINKS_PER_KEYWORD]
 
     log(f"[DEBUG] {len(links)} links recolhidos.")
     if not links:
@@ -353,7 +354,6 @@ def _page_text_for_match(driver, max_chars=80_000):
         return ""
 
 def _hard_clean_page(driver):
-    # Limpa o máximo de estado possível entre links para baixar picos de memória
     try:
         driver.execute_script("try{localStorage.clear();}catch(e){}; try{sessionStorage.clear();}catch(e){};")
     except Exception:
@@ -366,24 +366,21 @@ def _hard_clean_page(driver):
         pass
     gc.collect()
 
-def visitar_links(driver, links, keyword, resultados, results_url):
-    log(f"[DEBUG] A visitar {len(links)} links...")
+def visitar_links(driver, links, keyword, resultados, results_url, page_index):
+    log(f"[DEBUG] (pág. {page_index}) A visitar {len(links)} links...")
     kw_lower = (keyword or "").lower()
 
     for idx, (href_google, data_pub) in enumerate(links, start=1):
         inicio_link = time.time()
         try:
             dominio = urlparse(href_google).netloc or "google"
-            log(f"[DEBUG] ({idx}/{len(links)}) Abrir: {dominio}")
+            log(f"[DEBUG] (pág. {page_index}) ({idx}/{len(links)}) Abrir: {dominio}")
 
-            # Abrir diretamente por URL para evitar interações no SERP
             open_url_with_timeout(driver, href_google, soft_wait=0.4)
 
-            # Opcional: não aceitar cookies nos sites destino para poupar memória/tempo
             if not DO_NOT_ACCEPT_SITE_COOKIES:
                 aceitar_cookies_google(driver, time_budget_s=(3 if FAST_MODE else 6))
 
-            # Timeout duro por link
             if time.time() - inicio_link > MAX_SECONDS_PER_LINK:
                 result = {
                     "link": driver.current_url,
@@ -395,12 +392,12 @@ def visitar_links(driver, links, keyword, resultados, results_url):
                 }
                 resultados.append(result)
                 write_result_immediately(result)
-                log(f"[DEBUG] ({idx}/{len(links)}) TIMEOUT após {int(time.time()-inicio_link)}s.")
+                log(f"[DEBUG] (pág. {page_index}) ({idx}/{len(links)}) TIMEOUT após {int(time.time()-inicio_link)}s.")
             else:
                 texto = _page_text_for_match(driver)
                 titulo = driver.title or "Sem título"
                 site_name = urlparse(driver.current_url).netloc
-                encontrou = kw_lower in (texto.lower() if texto else "")
+                encontrou = (kw_lower in (texto.lower() if texto else ""))
 
                 result = {
                     "link": driver.current_url,
@@ -411,7 +408,7 @@ def visitar_links(driver, links, keyword, resultados, results_url):
                 }
                 resultados.append(result)
                 write_result_immediately(result)
-                log(f"[DEBUG] ({idx}/{len(links)}) {site_name} | {'ENCONTRADA' if encontrou else 'NÃO ENCONTRADA'} | {int(time.time()-inicio_link)}s")
+                log(f"[DEBUG] (pág. {page_index}) ({idx}/{len(links)}) {site_name} | {'ENCONTRADA' if encontrou else 'NÃO ENCONTRADA'} | {int(time.time()-inicio_link)}s")
 
         except Exception as e:
             result = {
@@ -424,26 +421,23 @@ def visitar_links(driver, links, keyword, resultados, results_url):
             }
             resultados.append(result)
             write_result_immediately(result)
-            log(f"[ERRO visitar_link] ({idx}/{len(links)}): {e}")
+            log(f"[ERRO visitar_link] (pág. {page_index}) ({idx}/{len(links)}): {e}")
         finally:
-            # Libertar DOM pesado antes de voltar aos resultados
             try:
                 driver.get("about:blank")
                 time.sleep(0.2)
             except Exception:
                 pass
             _hard_clean_page(driver)
-            # Voltar aos resultados
             try:
                 open_url_with_timeout(driver, results_url, soft_wait=0.3)
             except Exception:
                 pass
 
 # -------------------------------------------------------------
-# Paginação (mantida, mas com limites agressivos)
+# Paginação (primeiro por URL ?start=; fallback: clicar pnnext)
 # -------------------------------------------------------------
-def proxima_pagina(driver):
-    log("[DEBUG] Próxima página...")
+def proxima_pagina(driver, current_page_index):
     try:
         parsed = urlparse(driver.current_url)
         qs_pairs = [p for p in parsed.query.split("&") if p]
@@ -454,12 +448,24 @@ def proxima_pagina(driver):
         new_url = urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
         prev = driver.current_url
         open_url_with_timeout(driver, new_url, soft_wait=0.4)
-        if driver.current_url == prev:
-            log("[DEBUG] URL não mudou ao paginar — a parar.")
-            return False
-        return True
+        if driver.current_url != prev:
+            log(f"[DEBUG] Mudou para a página {current_page_index+1} (via URL).")
+            return True
     except Exception:
-        return False
+        pass
+
+    # Fallback: tentar clicar no botão "pnnext"
+    try:
+        nxt = WebDriverWait(driver, 4).until(EC.element_to_be_clickable((By.ID, "pnnext")))
+        if try_click(driver, nxt, prefix="pnnext"):
+            time.sleep(0.5)
+            log(f"[DEBUG] Mudou para a página {current_page_index+1} (via clique).")
+            return True
+    except Exception:
+        pass
+
+    log("[DEBUG] Não foi possível avançar para a próxima página.")
+    return False
 
 # -------------------------------------------------------------
 # Execução principal
@@ -518,7 +524,7 @@ def executar_scraper_google(keyword, filtro_tempo):
             pass
 
         total_links_processados = 0
-        page_count = 0
+        page_index = 1  # começa na página 1
         keyword_deadline = (time.time() + MAX_SECONDS_PER_KEYWORD) if MAX_SECONDS_PER_KEYWORD else None
 
         while True:
@@ -528,23 +534,30 @@ def executar_scraper_google(keyword, filtro_tempo):
 
             links = coletar_links_noticias(driver, excluir_br=False)
             if links:
-                # Respeitar MAX_LINKS_PER_KEYWORD total
+                # Aplica o limite total por keyword distribuindo pelas páginas
                 if MAX_LINKS_PER_KEYWORD:
-                    links = links[:max(0, MAX_LINKS_PER_KEYWORD - total_links_processados)]
+                    restante = MAX_LINKS_PER_KEYWORD - total_links_processados
+                    if restante <= 0:
+                        log(f"[DEBUG] Atingido limite total de links: {total_links_processados}/{MAX_LINKS_PER_KEYWORD}")
+                        break
+                    links = links[:restante]
+
                 results_url = driver.current_url
-                visitar_links(driver, links, keyword, resultados, results_url)
+                visitar_links(driver, links, keyword, resultados, results_url, page_index)
                 total_links_processados += len(links)
 
-            page_count += 1
-            if MAX_PAGES_PER_KEYWORD and page_count >= MAX_PAGES_PER_KEYWORD:
-                log(f"[DEBUG] A parar por limite de páginas: {page_count}/{MAX_PAGES_PER_KEYWORD}")
+            if MAX_PAGES_PER_KEYWORD and page_index >= MAX_PAGES_PER_KEYWORD:
+                log(f"[DEBUG] A parar por limite de páginas: {page_index}/{MAX_PAGES_PER_KEYWORD}")
                 break
             if MAX_LINKS_PER_KEYWORD and total_links_processados >= MAX_LINKS_PER_KEYWORD:
-                log(f"[DEBUG] Atingido limite de links: {total_links_processados}/{MAX_LINKS_PER_KEYWORD}")
+                log(f"[DEBUG] Atingido limite total de links: {total_links_processados}/{MAX_LINKS_PER_KEYWORD}")
                 break
 
-            if not proxima_pagina(driver):
+            # Próxima página
+            if not proxima_pagina(driver, page_index):
                 break
+            page_index += 1
+
     finally:
         try:
             driver.quit()
@@ -561,9 +574,8 @@ def rodar_scraper_sequencial(keywords_string, filtro_tempo):
         log(f"[DEBUG] A processar keyword: '{kw}'")
         try:
             res = executar_scraper_google(kw, filtro_tempo)
-            # Se estivermos a gravar JSONL, não precisamos acumular; mas devolvemos os últimos resultados para a UI
             if RESULTS_JSONL_PATH:
-                all_results.extend(res[-3:])  # manter leve: só últimos N
+                all_results.extend(res[-3:])  # manter leve na memória
             else:
                 all_results.extend(res)
         except Exception as e:
