@@ -2,7 +2,7 @@ import os
 import re
 import time
 from datetime import datetime
-from urllib.parse import urlparse, urlunparse, urljoin
+from urllib.parse import urlparse, urlunparse, urljoin, parse_qs, urlencode, quote_plus
 
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
@@ -36,7 +36,7 @@ def now_str():
 def log(msg):
     ensure_dirs()
     line = f"[{now_str()}] {msg}"
-    print(line, flush=True)  # flush para os logs aparecerem imediatamente
+    print(line, flush=True)
     try:
         with open(LOG_FILE, "a", encoding="utf-8") as f:
             f.write(line + "\n")
@@ -307,6 +307,22 @@ def clicar_noticias_tab(driver):
 
     log("[DEBUG] Não consegui clicar em 'Notícias' com os métodos disponíveis.")
     return False
+
+# --------- Fallback leve: entrar em Notícias por URL (sem mudar lógica) ---------
+def _get_current_query(driver):
+    try:
+        p = urlparse(driver.current_url)
+        qs = parse_qs(p.query)
+        return (qs.get("q", [""])[0] or "").strip()
+    except Exception:
+        return ""
+
+def ir_para_noticias_por_url(driver, keyword):
+    q = _get_current_query(driver) or (keyword or "")
+    url = f"https://www.google.com/search?q={quote_plus(q)}&hl=pt-PT&gl=pt&tbm=nws"
+    log("[DEBUG] A forçar 'Notícias' por URL (tbm=nws).")
+    open_url_with_timeout(driver, url, soft_wait=1.0)
+    _esperar_entrar_em_noticias(driver, timeout=6)
 
 def aplicar_filtro_tempo(driver, filtro_tempo):
     if not filtro_tempo or not filtro_tempo.strip():
@@ -581,12 +597,14 @@ def executar_scraper_google(keyword, filtro_tempo):
         aceitar_cookies_se_existem(driver, prefix="google_cookies_ncr")
 
         abrir_pesquisa_google(driver, keyword)
-        # clicar separador Notícias (fluxo original, agora mais robusto)
+        # clicar separador Notícias (fluxo original)
         if not clicar_noticias_tab(driver):
             log("[DEBUG] Tab Notícias não encontrada/clicável.")
             save_shot(driver, f"no_news_tab_{int(time.time())}.png")
             save_html(driver, f"no_news_tab_{int(time.time())}.html")
-            return resultados
+            # em vez de parar, força por URL e continua
+            log("[DEBUG] A forçar 'Notícias' por URL…")
+            ir_para_noticias_por_url(driver, keyword)
 
         aplicar_filtro_tempo(driver, filtro_tempo)
         clicar_linguagem(driver)
