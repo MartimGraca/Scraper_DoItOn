@@ -1,6 +1,7 @@
 import os
 import re
 import time
+import gc
 from datetime import datetime
 from urllib.parse import urlparse, urlunparse, urljoin, parse_qs, urlencode, quote_plus
 
@@ -23,6 +24,10 @@ PAGELOAD_TIMEOUT = 25
 SCRIPT_TIMEOUT = 20
 WAIT_SHORT = 0.2
 WAIT_MED = 0.6
+
+# Limites opcionais para controlar memória/tempo (0 = sem limite)
+MAX_LINKS_PER_KEYWORD = int(os.getenv("MAX_LINKS_PER_KEYWORD", "0") or "0")
+MAX_PAGES_PER_KEYWORD = int(os.getenv("MAX_PAGES_PER_KEYWORD", "0") or "0")
 
 
 def ensure_dirs():
@@ -98,7 +103,6 @@ def try_click(driver, el, prefix="click"):
     except Exception:
         pass
 
-    # Remover overlays e tentar JS click
     try:
         driver.execute_script("""
             var overlays = document.querySelectorAll(
@@ -115,8 +119,6 @@ def try_click(driver, el, prefix="click"):
     return False
 
 def normalize_google_href(href, base="https://www.google.com"):
-    # Mantemos o href “do Google” para clicar no SERP (como no teu código).
-    # Apenas normalizamos relativo para absoluto para guardares/depurares se precisares.
     try:
         if href.startswith("/"):
             return urljoin(base, href)
@@ -156,7 +158,6 @@ def aceitar_cookies_se_existem(driver, prefix="cookies"):
         log("[DEBUG] A tentar aceitar cookies...")
         time.sleep(0.5)
         textos = ['Aceitar tudo','Accept all','Aceitar','Concordo','Consent','Agree','OK','Aceitar cookies','Aceitar todos']
-        # Fora iframes
         btn = localizar_botao_por_textos(driver, textos)
         if btn and try_click(driver, btn, prefix=f"{prefix}_out"):
             log("[DEBUG] Cookies aceites (fora iframe).")
@@ -166,7 +167,6 @@ def aceitar_cookies_se_existem(driver, prefix="cookies"):
                 pass
             return True
 
-        # Dentro iframes
         iframes = driver.find_elements(By.TAG_NAME, "iframe")
         for i, fr in enumerate(iframes):
             try:
@@ -185,7 +185,6 @@ def aceitar_cookies_se_existem(driver, prefix="cookies"):
             except Exception:
                 driver.switch_to.default_content()
 
-        # JS direto
         for sel in [
             "button[aria-label='Accept all']",
             "button[aria-label*='accept' i]",
@@ -212,11 +211,9 @@ def aceitar_cookies_se_existem(driver, prefix="cookies"):
 # Pesquisa: abrir já em Notícias (sem cliques de aba)
 # -------------------------------------------------------------
 def abrir_pesquisa_google(driver, keyword):
-    # Abre diretamente na vertical de notícias (tbm=nws)
     url = f"https://www.google.com/search?q={quote_plus(keyword)}&hl=pt-PT&gl=pt&tbm=nws"
     open_url_with_timeout(driver, url, soft_wait=0.8)
     aceitar_cookies_se_existem(driver, prefix="google_cookies_search")
-    # Confirmação leve
     try:
         WebDriverWait(driver, 6).until(
             EC.any_of(
@@ -261,7 +258,6 @@ def aplicar_filtro_tempo(driver, filtro_tempo):
             time.sleep(0.8)
     except Exception as e:
         log(f"[ERRO filtro]: {e}")
-    # Reforço por URL (leve)
     aplicar_filtro_tempo_por_url(driver, filtro_tempo)
 
 def aplicar_filtro_tempo_por_url(driver, filtro_tempo):
@@ -312,7 +308,6 @@ def coletar_links_noticias(driver, excluir_br=False):
     links = []
     raw_items = []
 
-    # Regra principal
     try:
         blocos = WebDriverWait(driver, 12).until(
             EC.presence_of_all_elements_located((By.XPATH, "//div[@role='heading' and contains(@class,'n0jPhd')]"))
@@ -329,7 +324,6 @@ def coletar_links_noticias(driver, excluir_br=False):
     except Exception:
         pass
 
-    # Fallbacks suaves se a regra principal não apanhou nada
     if not raw_items:
         try:
             anchors = driver.find_elements(By.XPATH, "//a[.//div[@role='heading'] or .//h3]")
@@ -343,7 +337,6 @@ def coletar_links_noticias(driver, excluir_br=False):
         except Exception:
             pass
 
-    # Processar, filtrar e extrair datas
     for a_el, href in raw_items:
         try:
             parsed = urlparse(href)
@@ -364,11 +357,11 @@ def coletar_links_noticias(driver, excluir_br=False):
                     txt = (sp.get_attribute("aria-label") or sp.text or "").strip()
                     if not txt:
                         continue
-                    if re.match(r"^há\\s+\\d+\\s+(minuto|hora|dia|semana|m[eê]s|ano)s?$", txt, flags=re.IGNORECASE):
+                    if re.match(r"^há\s+\d+\s+(minuto|hora|dia|semana|m[eê]s|ano)s?$", txt, flags=re.IGNORECASE):
                         data_text = txt; break
-                    if re.match(r"^\\d{2}/\\d{2}/\\d{4}$", txt):
+                    if re.match(r"^\d{2}/\d{2}/\d{4}$", txt):
                         data_text = txt; break
-                    if re.search(r"\\d", txt) and any(w in txt.lower() for w in ("há","min","hora","dia","semana","mês","mes","ano")):
+                    if re.search(r"\d", txt) and any(w in txt.lower() for w in ("há","min","hora","dia","semana","mês","mes","ano")):
                         data_text = txt; break
             except Exception:
                 pass
@@ -383,20 +376,34 @@ def coletar_links_noticias(driver, excluir_br=False):
     return links
 
 # -------------------------------------------------------------
-# Visitar links e voltar
+# Visitar links e voltar (memória otimizada)
 # -------------------------------------------------------------
+def _page_text_for_match(driver, max_chars=200_000):
+    try:
+        txt = driver.execute_script("return document.body ? document.body.innerText : '';") or ""
+        if len(txt) > max_chars:
+            return txt[:max_chars]
+        return txt
+    except Exception:
+        return ""
+
 def visitar_links(driver, links, keyword, resultados):
     log(f"[DEBUG] A visitar {len(links)} links...")
+
+    # Limite opcional por keyword (0 = sem limite)
+    if MAX_LINKS_PER_KEYWORD and len(links) > MAX_LINKS_PER_KEYWORD:
+        log(f"[DEBUG] A limitar visitas a {MAX_LINKS_PER_KEYWORD} links por keyword.")
+        links = links[:MAX_LINKS_PER_KEYWORD]
+
     results_url = driver.current_url
+    kw_lower = (keyword or "").lower()
     for href_google, data_pub in links:
         try:
-            # Clicar pelo href EXATO do SERP (com redirecionamento do Google)
             try:
                 link_element = WebDriverWait(driver, 8).until(
                     EC.element_to_be_clickable((By.XPATH, f"//a[@href='{href_google}']"))
                 )
             except Exception:
-                # fallback: starts-with (tracking dinâmico)
                 try:
                     link_element = WebDriverWait(driver, 5).until(
                         EC.element_to_be_clickable((By.XPATH, f"//a[starts-with(@href, '{href_google.split('&')[0]}')]"))
@@ -411,31 +418,18 @@ def visitar_links(driver, links, keyword, resultados):
                 time.sleep(0.4)
                 if not try_click(driver, link_element, prefix="abrir_artigo"):
                     driver.execute_script("window.location = arguments[0];", href_google)
-                time.sleep(1.2)
+                time.sleep(1.0)
 
-            # Cookies do site
             try:
                 aceitar_cookies_se_existem(driver, prefix="site_cookie")
             except Exception:
                 pass
 
-            # Recolher conteúdo
-            corpo = ""
-            try:
-                artigos = driver.find_elements(By.TAG_NAME, "article")
-                if artigos:
-                    corpo = " ".join([a.text for a in artigos if a.text.strip()])
-                else:
-                    divs = driver.find_elements(By.XPATH, "//div[contains(@class,'content') or contains(@class,'article')]")
-                    corpo = " ".join([d.text for d in divs if d.text.strip()])
-                if not corpo:
-                    corpo = driver.page_source
-            except Exception:
-                corpo = driver.page_source
-
+            texto = _page_text_for_match(driver)
             titulo = driver.title or "Sem título"
             site_name = urlparse(driver.current_url).netloc
-            encontrou = keyword.lower() in corpo.lower()
+            encontrou = kw_lower in (texto.lower() if texto else "")
+
             resultados.append({
                 "link": driver.current_url,
                 "titulo": titulo,
@@ -454,15 +448,22 @@ def visitar_links(driver, links, keyword, resultados):
                 "erro": str(e)
             })
         finally:
-            # Voltar tal como no teu fluxo, mas com salvaguarda
+            # Voltar e limpar um pouco de estado/memória
             try:
                 driver.back()
-                time.sleep(1.2)
+                time.sleep(0.8)
             except Exception:
                 try:
-                    open_url_with_timeout(driver, results_url, soft_wait=0.6)
+                    open_url_with_timeout(driver, results_url, soft_wait=0.5)
                 except Exception:
                     pass
+            try:
+                driver.execute_cdp_cmd("Network.clearBrowserCache", {})
+                driver.execute_cdp_cmd("Network.clearBrowserCookies", {})
+                driver.execute_cdp_cmd("Performance.disable", {})
+            except Exception:
+                pass
+            gc.collect()
 
 # -------------------------------------------------------------
 # Próxima página (preferir click; fallback por parâmetro)
@@ -472,12 +473,11 @@ def proxima_pagina(driver):
     try:
         nxt = WebDriverWait(driver, 6).until(EC.element_to_be_clickable((By.ID, "pnnext")))
         if try_click(driver, nxt, prefix="pnnext"):
-            time.sleep(1.0)
+            time.sleep(0.8)
             return True
     except Exception:
         pass
 
-    # Fallback por URL (parâmetro start)
     try:
         parsed = urlparse(driver.current_url)
         qs = dict([kv for kv in [p.split("=",1) if "=" in p else (p,"") for p in parsed.query.split("&") if p]])
@@ -486,7 +486,7 @@ def proxima_pagina(driver):
         new_query = "&".join([f"{k}={v}" for k,v in qs.items()])
         new_url = urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
         prev = driver.current_url
-        open_url_with_timeout(driver, new_url, soft_wait=0.8)
+        open_url_with_timeout(driver, new_url, soft_wait=0.6)
         if driver.current_url == prev:
             log("[DEBUG] URL não mudou ao paginar — a parar.")
             return False
@@ -502,7 +502,7 @@ def executar_scraper_google(keyword, filtro_tempo):
     options = uc.ChromeOptions()
     options.add_argument("--headless=new")
     options.add_argument("--disable-gpu")
-    options.add_argument("--window-size=1366,768")
+    options.add_argument("--window-size=1280,720")  # janela um pouco menor poupa memória
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-blink-features=AutomationControlled")
@@ -511,24 +511,41 @@ def executar_scraper_google(keyword, filtro_tempo):
     options.add_argument("--remote-allow-origins=*")
     options.add_argument("--lang=pt-PT")
     options.add_argument(f"--user-agent={USER_AGENT}")
+    # Otimizações de memória/performance sem mudar a lógica
+    options.page_load_strategy = "eager"  # não espera todos os recursos
+    options.add_experimental_option("prefs", {
+        "profile.managed_default_content_settings.images": 2  # bloquear imagens
+    })
+    # Flags adicionais do patch mínimo
+    options.add_argument("--incognito")
+    options.add_argument("--disable-application-cache")
+    options.add_argument("--disk-cache-size=0")
+    options.add_argument("--media-cache-size=0")
+    options.add_argument("--disable-software-rasterizer")
+    options.add_argument("--blink-settings=imagesEnabled=false")
+    options.add_argument("--disable-background-networking")
+    options.add_argument("--disable-sync")
+    options.add_argument("--disable-translate")
+    options.add_argument("--no-zygote")
+    options.add_argument("--mute-audio")
+    options.add_argument("--renderer-process-limit=1")
+    options.add_argument("--disable-features=PaintHolding")
 
     driver = uc.Chrome(options=options)
     driver.set_page_load_timeout(PAGELOAD_TIMEOUT)
     driver.set_script_timeout(SCRIPT_TIMEOUT)
-    driver.set_window_size(1366, 768)
+    driver.set_window_size(1280, 720)
 
     resultados = []
     try:
-        open_url_with_timeout(driver, "https://www.google.com/ncr", soft_wait=0.8)
+        open_url_with_timeout(driver, "https://www.google.com/ncr", soft_wait=0.6)
         aceitar_cookies_se_existem(driver, prefix="google_cookies_ncr")
 
-        # Abre diretamente na vertical "Notícias" (sem clicar)
         abrir_pesquisa_google(driver, keyword)
 
         aplicar_filtro_tempo(driver, filtro_tempo)
         clicar_linguagem(driver)
 
-        # Esperar que existam headings de notícias ou resultados
         try:
             WebDriverWait(driver, 10).until(
                 EC.presence_of_element_located((By.XPATH, "//div[@role='heading']"))
@@ -536,11 +553,17 @@ def executar_scraper_google(keyword, filtro_tempo):
         except Exception:
             pass
 
-        # Loop de páginas
+        page_count = 0
         while True:
             links = coletar_links_noticias(driver, excluir_br=False)
             if links:
                 visitar_links(driver, links, keyword, resultados)
+
+            page_count += 1
+            if MAX_PAGES_PER_KEYWORD and page_count >= MAX_PAGES_PER_KEYWORD:
+                log(f"[DEBUG] A parar por limite de páginas: {page_count}/{MAX_PAGES_PER_KEYWORD}")
+                break
+
             if not proxima_pagina(driver):
                 break
     finally:
@@ -548,6 +571,7 @@ def executar_scraper_google(keyword, filtro_tempo):
             driver.quit()
         except Exception:
             pass
+        gc.collect()
 
     return resultados
 
@@ -562,6 +586,8 @@ def rodar_scraper_sequencial(keywords_string, filtro_tempo):
         except Exception as e:
             log(f"[ERRO ao processar '{kw}']: {type(e).__name__}: {str(e)}")
             all_results.append({"keyword": kw, "erro": f"{type(e).__name__}: {str(e)}"})
+        finally:
+            gc.collect()
     return all_results
 
 if __name__ == "__main__":
