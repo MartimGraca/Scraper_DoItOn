@@ -2,7 +2,7 @@ import os
 import re
 import time
 from datetime import datetime
-from urllib.parse import urlparse, urlunparse, urljoin, parse_qs, urlencode, quote_plus
+from urllib.parse import urlparse, urlunparse, urljoin
 
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
@@ -41,11 +41,10 @@ def log(msg):
     except Exception:
         pass
 
-# Removido: screenshots para acelerar (no-op)
+# Desativado: não guardar screenshots (acelera e reduz memória)
 def save_shot(driver, name):
     return
 
-# Mantido: HTML dump só quando não há links (opcional e raro). Se quiseres remover também, torna no-op.
 def save_html(driver, name):
     ensure_dirs()
     path = os.path.join(SCREENSHOT_DIR, name)
@@ -71,8 +70,6 @@ def open_url_with_timeout(driver, url, timeout=PAGELOAD_TIMEOUT, soft_wait=0.8):
             driver.execute_script("window.stop();")
         except Exception:
             pass
-        # deixamos seguir; página pode ter carregado parcialmente
-    # pequena “respiração” (reduzida para acelerar)
     time.sleep(soft_wait)
 
 def try_click(driver, el, prefix="click"):
@@ -117,8 +114,6 @@ def try_click(driver, el, prefix="click"):
     return False
 
 def normalize_google_href(href, base="https://www.google.com"):
-    # Mantemos o href “do Google” para clicar no SERP (como no teu código).
-    # Apenas normalizamos relativo para absoluto para guardares/depurares se precisares.
     try:
         if href.startswith("/"):
             return urljoin(base, href)
@@ -214,7 +209,6 @@ def aceitar_cookies_se_existem(driver, prefix="cookies"):
 # Passos Google: pesquisa -> tab Notícias -> filtros -> linguagem
 # -------------------------------------------------------------
 def abrir_pesquisa_google(driver, keyword):
-    # Evita send_keys no input; abre resultados diretamente
     url = f"https://www.google.com/search?q={keyword}&hl=pt-PT&gl=pt"
     open_url_with_timeout(driver, url, soft_wait=0.8)
     aceitar_cookies_se_existem(driver, prefix="google_cookies_search")
@@ -235,7 +229,6 @@ def _esperar_entrar_em_noticias(driver, timeout=6):
 def clicar_noticias_tab(driver):
     log("[DEBUG] A clicar no separador Notícias...")
 
-    # 1) Seletores habituais
     selectors = [
         "//a[contains(@href,'tbm=nws')]",
         "//a[normalize-space()='Notícias']",
@@ -252,7 +245,6 @@ def clicar_noticias_tab(driver):
         except Exception:
             continue
 
-    # 2) JS direto no link com tbm=nws
     try:
         ok = driver.execute_script("""
             var a = document.querySelector("a[href*='tbm=nws']");
@@ -265,7 +257,6 @@ def clicar_noticias_tab(driver):
     except Exception:
         pass
 
-    # 3) Classe específica
     try:
         ok = driver.execute_script("""
             var els = document.getElementsByClassName('sc-4ed1b0a0-5 gUqbJK');
@@ -279,54 +270,8 @@ def clicar_noticias_tab(driver):
     except Exception:
         pass
 
-    # 4) JS por texto visível “Notícias”
-    try:
-        ok = driver.execute_script("""
-            var as = Array.from(document.querySelectorAll('a, button'));
-            var alvo = as.find(n => (n.textContent||'').trim().toLowerCase() === 'notícias');
-            if(alvo){ try{ alvo.click(); return true; }catch(e){} }
-            return false;
-        """)
-        if ok:
-            if _esperar_entrar_em_noticias(driver, timeout=6):
-                log("[DEBUG] Notícias clicado via texto visível (JS).")
-                return True
-    except Exception:
-        pass
-
     log("[DEBUG] Não consegui clicar em 'Notícias' com os métodos disponíveis.")
     return False
-
-# --------- Fallback leve: entrar em Notícias por URL (mantendo o resto igual) ---------
-def ir_para_noticias_por_url(driver, keyword):
-    url = f"https://www.google.com/search?q={quote_plus(keyword)}&hl=pt-PT&gl=pt&tbm=nws"
-    log("[DEBUG] A forçar 'Notícias' por URL (tbm=nws).")
-    open_url_with_timeout(driver, url, soft_wait=0.8)
-    _esperar_entrar_em_noticias(driver, timeout=6)
-
-# --------- Fallback leve: filtro de tempo por URL (tbs=qdr:*) ---------
-def aplicar_filtro_tempo_por_url(driver, filtro_tempo):
-    if not filtro_tempo:
-        return
-    t = filtro_tempo.strip().lower()
-    code = None
-    if "hora" in t: code = "h"
-    elif "24" in t or "dia" in t: code = "d"
-    elif "semana" in t: code = "w"
-    elif "mês" in t or "mes" in t: code = "m"
-    elif "ano" in t: code = "y"
-    if not code:
-        return
-    try:
-        p = urlparse(driver.current_url)
-        qs = parse_qs(p.query)
-        qs["tbs"] = [f"qdr:{code}"]
-        newq = urlencode({k: (v[0] if isinstance(v, list) else v) for k, v in qs.items()})
-        new_url = urlunparse((p.scheme, p.netloc, p.path, p.params, newq, p.fragment))
-        open_url_with_timeout(driver, new_url, soft_wait=0.5)
-        log(f"[DEBUG] Filtro aplicado por URL: tbs=qdr:{code}")
-    except Exception:
-        pass
 
 def aplicar_filtro_tempo(driver, filtro_tempo):
     if not filtro_tempo or not filtro_tempo.strip():
@@ -384,7 +329,6 @@ def coletar_links_noticias(driver, excluir_br=False):
     links = []
     raw_items = []
 
-    # Tua regra principal
     try:
         blocos = WebDriverWait(driver, 12).until(
             EC.presence_of_all_elements_located((By.XPATH, "//div[@role='heading' and contains(@class,'n0jPhd')]"))
@@ -401,7 +345,6 @@ def coletar_links_noticias(driver, excluir_br=False):
     except Exception:
         pass
 
-    # Fallbacks suaves se a regra principal não apanhou nada
     if not raw_items:
         try:
             anchors = driver.find_elements(By.XPATH, "//a[.//div[@role='heading'] or .//h3]")
@@ -415,12 +358,10 @@ def coletar_links_noticias(driver, excluir_br=False):
         except Exception:
             pass
 
-    # Processar, filtrar e extrair datas como no teu
     for a_el, href in raw_items:
         try:
             parsed = urlparse(href)
             domain = parsed.netloc.lower()
-            # Alguns hrefs podem vir relativos "/url?..." — normalizar só para logging/visita direta
             if href.startswith("/"):
                 href = urljoin("https://www.google.com", href)
                 parsed = urlparse(href)
@@ -429,7 +370,6 @@ def coletar_links_noticias(driver, excluir_br=False):
             if excluir_br and domain.endswith(".br"):
                 continue
 
-            # data
             data_text = "N/D"
             try:
                 data_parent = a_el.find_element(By.XPATH, ".//ancestor::*[self::div or self::article][1]")
@@ -447,7 +387,6 @@ def coletar_links_noticias(driver, excluir_br=False):
             except Exception:
                 pass
 
-            # Guardamos o href “do Google” para clicar no SERP — tal como no teu código
             links.append((href, data_text))
         except Exception:
             continue
@@ -465,13 +404,11 @@ def visitar_links(driver, links, keyword, resultados):
     results_url = driver.current_url
     for href_google, data_pub in links:
         try:
-            # Clicar pelo href EXATO do SERP (com redirecionamento do Google)
             try:
                 link_element = WebDriverWait(driver, 8).until(
                     EC.element_to_be_clickable((By.XPATH, f"//a[@href='{href_google}']"))
                 )
             except Exception:
-                # fallback: procurar por starts-with (casos com parâmetros dinâmicos de tracking)
                 try:
                     link_element = WebDriverWait(driver, 5).until(
                         EC.element_to_be_clickable((By.XPATH, f"//a[starts-with(@href, '{href_google.split('&')[0]}')]"))
@@ -480,23 +417,19 @@ def visitar_links(driver, links, keyword, resultados):
                     link_element = None
 
             if link_element is None:
-                # fallback duro: abrir diretamente
                 open_url_with_timeout(driver, href_google, soft_wait=0.8)
             else:
                 driver.execute_script("arguments[0].scrollIntoView({block:'center'});", link_element)
                 time.sleep(0.4)
                 if not try_click(driver, link_element, prefix="abrir_artigo"):
-                    # se click falhar, abrir via location
                     driver.execute_script("window.location = arguments[0];", href_google)
                 time.sleep(1.2)
 
-            # Possíveis cookies do site
             try:
                 aceitar_cookies_se_existem(driver, prefix="site_cookie")
             except Exception:
                 pass
 
-            # Recolher conteúdo
             corpo = ""
             try:
                 artigos = driver.find_elements(By.TAG_NAME, "article")
@@ -531,10 +464,9 @@ def visitar_links(driver, links, keyword, resultados):
                 "erro": str(e)
             })
         finally:
-            # Voltar tal como no teu fluxo, mas com salvaguarda
             try:
                 driver.back()
-                time.sleep(1.2)
+                time.sleep(1.0)
             except Exception:
                 try:
                     open_url_with_timeout(driver, results_url, soft_wait=0.6)
@@ -554,7 +486,6 @@ def proxima_pagina(driver):
     except Exception:
         pass
 
-    # Fallback por URL (parâmetro start)
     try:
         parsed = urlparse(driver.current_url)
         qs = dict([kv for kv in [p.split("=",1) if "=" in p else (p,"") for p in parsed.query.split("&") if p]])
@@ -572,14 +503,14 @@ def proxima_pagina(driver):
         return False
 
 # -------------------------------------------------------------
-# Execução principal (adaptação fiel à tua lógica)
+# Execução principal (adaptação fiel à tua lógica) + otimizações de memória
 # -------------------------------------------------------------
 def executar_scraper_google(keyword, filtro_tempo):
     log("[DEBUG] A iniciar o scraper do Google (adaptação fiel).")
     options = uc.ChromeOptions()
     options.add_argument("--headless=new")
     options.add_argument("--disable-gpu")
-    options.add_argument("--window-size=1366,768")
+    options.add_argument("--window-size=1280,720")  # janela menor = menos memória
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-blink-features=AutomationControlled")
@@ -588,38 +519,41 @@ def executar_scraper_google(keyword, filtro_tempo):
     options.add_argument("--remote-allow-origins=*")
     options.add_argument("--lang=pt-PT")
     options.add_argument(f"--user-agent={USER_AGENT}")
-    # Acelerar sem alterar a lógica:
-    options.page_load_strategy = "eager"  # não espera todos os recursos
+    # SÓ otimizações de performance/memória (não alteram a lógica):
+    options.page_load_strategy = "eager"  # não espera recursos tardios
+    options.add_argument("--no-first-run")
+    options.add_argument("--no-default-browser-check")
+    options.add_argument("--disable-background-networking")
+    options.add_argument("--disable-sync")
+    options.add_argument("--disable-translate")
+    options.add_argument("--mute-audio")
+    options.add_argument("--no-zygote")
+    options.add_argument("--renderer-process-limit=1")
     options.add_argument("--disable-features=PaintHolding")
+    # bloquear imagens para reduzir memória
     options.add_experimental_option("prefs", {
-        "profile.managed_default_content_settings.images": 2  # desliga imagens
+        "profile.managed_default_content_settings.images": 2
     })
 
-    # Se precisares alinhar com o teu local (137), descomenta:
-    # driver = uc.Chrome(options=options, version_main=137)
     driver = uc.Chrome(options=options)
     driver.set_page_load_timeout(PAGELOAD_TIMEOUT)
     driver.set_script_timeout(SCRIPT_TIMEOUT)
-    driver.set_window_size(1366, 768)
+    driver.set_window_size(1280, 720)
 
     resultados = []
     try:
-        open_url_with_timeout(driver, "https://www.google.com/ncr", soft_wait=0.8)
+        open_url_with_timeout(driver, "https://www.google.com/ncr", soft_wait=0.6)
         aceitar_cookies_se_existem(driver, prefix="google_cookies_ncr")
 
         abrir_pesquisa_google(driver, keyword)
-        # clicar separador Notícias (fluxo original)
         if not clicar_noticias_tab(driver):
             log("[DEBUG] Tab Notícias não encontrada/clicável.")
-            # Fallback leve (mantendo o resto do fluxo): forçar por URL e continuar
-            ir_para_noticias_por_url(driver, keyword)
+            # mantém a tua lógica: sem URL fallback aqui (só loga e termina cedo)
+            return resultados
 
         aplicar_filtro_tempo(driver, filtro_tempo)
-        # Reforço leve por URL se o menu falhar silenciosamente
-        aplicar_filtro_tempo_por_url(driver, filtro_tempo)
         clicar_linguagem(driver)
 
-        # Esperar que existam headings de notícias ou resultados
         try:
             WebDriverWait(driver, 10).until(
                 EC.presence_of_element_located((By.XPATH, "//div[@role='heading']"))
@@ -627,7 +561,6 @@ def executar_scraper_google(keyword, filtro_tempo):
         except Exception:
             pass
 
-        # Loop de páginas
         while True:
             links = coletar_links_noticias(driver, excluir_br=False)
             if links:
