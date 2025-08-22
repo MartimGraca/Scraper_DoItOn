@@ -24,6 +24,9 @@ WAIT_MED = 0.6
 HL = "pt-PT"
 GL = "pt"
 
+# Limites de segurança para paginação
+MAX_PAGES = 20
+
 # ========================= Utils ==========================
 def ensure_dirs():
     os.makedirs(SCREENSHOT_DIR, exist_ok=True)
@@ -156,10 +159,50 @@ def aceitar_cookies_se_existem(driver, prefix="cookies"):
         return False
 
 # ===================== Pesquisa/Notícias ====================
-def abrir_pesquisa_google(driver, keyword):
-    url = f"https://www.google.com/search?q={keyword}&hl={HL}&gl={GL}"
-    open_url_with_timeout(driver, url, soft_wait=1.0)
-    aceitar_cookies_se_existem(driver, prefix="google_cookies_search")
+def pesquisar_por_input(driver, keyword):
+    # Logs explícitos de cada etapa
+    log("[DEBUG] A abrir a página inicial e a clicar na barra de pesquisa...")
+    open_url_with_timeout(driver, "https://www.google.com/ncr", soft_wait=0.8)
+    aceitar_cookies_se_existem(driver, prefix="google_cookies_home")
+
+    # Possíveis seletores do input
+    inputs = [
+        (By.NAME, "q"),
+        (By.CSS_SELECTOR, "input[aria-label='Pesquisar']"),
+        (By.CSS_SELECTOR, "input[type='search']"),
+        (By.CSS_SELECTOR, "textarea[name='q']"),
+    ]
+
+    el = None
+    for by, sel in inputs:
+        try:
+            el = WebDriverWait(driver, 8).until(EC.element_to_be_clickable((by, sel)))
+            break
+        except Exception:
+            continue
+
+    if not el:
+        log("[DEBUG] Não consegui focar o input de pesquisa — vou pesquisar por URL direta (fallback).")
+        url = f"https://www.google.com/search?q={keyword}&hl={HL}&gl={GL}"
+        open_url_with_timeout(driver, url, soft_wait=1.0)
+        return
+
+    try:
+        try_click(driver, el, prefix="focus_search_input")
+    except Exception:
+        pass
+
+    try:
+        el.clear()
+    except Exception:
+        pass
+
+    log(f"[DEBUG] A escrever a keyword no input: '{keyword}'")
+    for ch in keyword:
+        el.send_keys(ch)
+        time.sleep(0.05)
+    el.send_keys(Keys.ENTER)
+    time.sleep(1.0)
 
 def ir_para_noticias_por_click(driver):
     log("[DEBUG] A tentar clicar em 'Notícias' (UI).")
@@ -189,6 +232,7 @@ def ir_para_noticias_por_url(driver):
         qs["gl"] = [GL]
         newq = urlencode({k: v[0] if isinstance(v, list) else v for k, v in qs.items()})
         new_url = urlunparse((p.scheme, p.netloc, p.path, p.params, newq, p.fragment))
+        log("[DEBUG] A forçar 'Notícias' por URL (tbm=nws).")
         open_url_with_timeout(driver, new_url, soft_wait=1.0)
         return True
     except Exception as e:
@@ -199,7 +243,6 @@ def map_filtro_para_qdr(filtro_tempo):
     if not filtro_tempo:
         return None
     t = filtro_tempo.strip().lower()
-    # mapeamentos típicos
     if "hora" in t:
         return "h"   # última hora
     if "24" in t or "dia" in t:
@@ -226,7 +269,7 @@ def aplicar_filtro_tempo_por_click(driver, filtro_tempo):
             return False
         time.sleep(0.6)
 
-        # Procurar items do submenu
+        # Submenu
         itens = WebDriverWait(driver, 8).until(
             EC.presence_of_all_elements_located((By.XPATH, "//a[@role='menuitemradio']"))
         )
@@ -279,6 +322,28 @@ def clicar_linguagem(driver):
     except Exception:
         pass
 
+def esperar_resultados_noticias(driver):
+    # Esperar por qualquer um dos cartões/âncoras típicos
+    try:
+        WebDriverWait(driver, 10).until(
+            EC.any_of(
+                EC.presence_of_element_located((By.XPATH, "//div[contains(@class,'dbsr')]//a[@href]")),
+                EC.presence_of_element_located((By.XPATH, "//a[contains(@class,'WlydOe')][@href]")),
+                EC.presence_of_element_located((By.XPATH, "//a[contains(@class,'tHmfQe')][@href]")),
+                EC.presence_of_element_located((By.XPATH, "//a[.//h3][@href]")),
+                EC.presence_of_element_located((By.XPATH, "//a[.//div[@role='heading']][@href]")),
+            )
+        )
+    except Exception:
+        pass
+    # 2 scrolls leves para lazy-load
+    for _ in range(2):
+        try:
+            driver.execute_script("window.scrollBy(0, Math.max(700, window.innerHeight*0.8));")
+        except Exception:
+            pass
+        time.sleep(0.7)
+
 # ===================== Coleta de links ======================
 def js_coletar_links_deep(driver):
     js = r"""
@@ -329,7 +394,7 @@ def coletar_links_noticias(driver, excluir_br=False):
     links = []
     seen = set()
 
-    # 3 tentativas com scroll leve
+    # 3 tentativas com scroll leve + deep JS
     for attempt in range(3):
         if attempt > 0:
             try:
@@ -467,16 +532,18 @@ def visitar_links(driver, links, keyword, resultados):
                     pass
 
 # =================== Paginação ==============================
-def proxima_pagina(driver):
+def proxima_pagina(driver, page_no, prev_url):
     log("[DEBUG] Próxima página...")
+    # 1) tentar clicar pnnext
     try:
-        nxt = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((By.ID, "pnnext")))
+        nxt = WebDriverWait(driver, 4).until(EC.element_to_be_clickable((By.ID, "pnnext")))
         if try_click(driver, nxt, prefix="pnnext"):
             time.sleep(1.0)
             return True
     except Exception:
         pass
-    # fallback por URL
+
+    # 2) fallback por URL start=*
     try:
         p = urlparse(driver.current_url)
         qs = parse_qs(p.query)
@@ -485,6 +552,13 @@ def proxima_pagina(driver):
         newq = urlencode({k: v[0] if isinstance(v, list) else v for k, v in qs.items()})
         new_url = urlunparse((p.scheme, p.netloc, p.path, p.params, newq, p.fragment))
         open_url_with_timeout(driver, new_url, soft_wait=0.8)
+        # parar se URL não mudou (fim) ou se excedeu limite de páginas
+        if driver.current_url == prev_url:
+            log("[DEBUG] URL não mudou após tentar próxima página — a parar.")
+            return False
+        if page_no + 1 >= MAX_PAGES:
+            log("[DEBUG] Limite de páginas atingido — a parar.")
+            return False
         return True
     except Exception:
         return False
@@ -494,7 +568,7 @@ def executar_scraper_google(keyword, filtro_tempo):
     log("[DEBUG] A iniciar o scraper do Google (Notícias + Ferramentas/Recentes).")
 
     options = uc.ChromeOptions()
-    # Para depurar visualmente, comenta a linha abaixo
+    # Para depurar visualmente, comente a linha abaixo
     options.add_argument("--headless=new")
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1366,768")
@@ -514,12 +588,10 @@ def executar_scraper_google(keyword, filtro_tempo):
 
     resultados = []
     try:
-        open_url_with_timeout(driver, "https://www.google.com/ncr", soft_wait=0.8)
-        aceitar_cookies_se_existem(driver, prefix="google_cookies_ncr")
+        # Pesquisa pela barra (com logs) e fallback por URL se necessário
+        pesquisar_por_input(driver, keyword)
 
-        abrir_pesquisa_google(driver, keyword)
-
-        # 1) tentar clicar "Notícias"; 2) fallback por URL
+        # Ir para Notícias (clique → URL fallback)
         if not ir_para_noticias_por_click(driver):
             log("[DEBUG] Falha a clicar 'Notícias' — a ir por URL (tbm=nws).")
             if not ir_para_noticias_por_url(driver):
@@ -527,27 +599,38 @@ def executar_scraper_google(keyword, filtro_tempo):
                 save_html(driver, f"no_news_tab_{int(time.time())}.html")
                 return resultados
 
-        # 1) aplicar filtro pela UI; 2) fallback por URL tbs=qdr:*
+        esperar_resultados_noticias(driver)
+
+        # Filtro (UI → URL fallback)
         ok_ui = aplicar_filtro_tempo_por_click(driver, filtro_tempo)
         if not ok_ui:
             log("[DEBUG] Filtro pela UI falhou — a aplicar pela URL.")
             aplicar_filtro_tempo_por_url(driver, filtro_tempo)
 
         clicar_linguagem(driver)
+        esperar_resultados_noticias(driver)
 
-        try:
-            WebDriverWait(driver, 8).until(
-                EC.presence_of_element_located((By.XPATH, "//a[@href and (starts-with(@href,'http') or starts-with(@href,'/url'))]"))
-            )
-        except Exception:
-            pass
-
+        # Loop de páginas com travão de “duas seguidas sem links”
+        zero_streak = 0
+        page_no = 0
         while True:
+            prev_url = driver.current_url
             links = coletar_links_noticias(driver, excluir_br=False)
-            if links:
+
+            if not links:
+                zero_streak += 1
+            else:
+                zero_streak = 0
                 visitar_links(driver, links, keyword, resultados)
-            if not proxima_pagina(driver):
+
+            if zero_streak >= 2:
+                log("[DEBUG] Duas páginas seguidas sem links — a parar.")
                 break
+
+            if not proxima_pagina(driver, page_no, prev_url):
+                break
+
+            page_no += 1
 
     finally:
         try:
@@ -558,6 +641,7 @@ def executar_scraper_google(keyword, filtro_tempo):
     return resultados
 
 def rodar_scraper_sequencial(keywords_string, filtro_tempo):
+    ensure_dirs()
     all_results = []
     keywords = [kw.strip() for kw in keywords_string.split(",") if kw.strip()]
     for kw in keywords:
