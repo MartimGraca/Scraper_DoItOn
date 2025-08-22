@@ -2,7 +2,7 @@ import os
 import re
 import time
 from datetime import datetime
-from urllib.parse import urlparse, urlunparse, urljoin, parse_qs, urlencode, quote_plus
+from urllib.parse import urlparse, urlunparse, urljoin
 
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
@@ -24,9 +24,7 @@ SCRIPT_TIMEOUT = 20
 WAIT_SHORT = 0.2
 WAIT_MED = 0.6
 
-# -------------------------------------------------------------
-# Utilitários
-# -------------------------------------------------------------
+
 def ensure_dirs():
     os.makedirs(SCREENSHOT_DIR, exist_ok=True)
 
@@ -43,25 +41,13 @@ def log(msg):
     except Exception:
         pass
 
+# Desativado: não guardar screenshots para acelerar
 def save_shot(driver, name):
-    ensure_dirs()
-    path = os.path.join(SCREENSHOT_DIR, name)
-    try:
-        driver.save_screenshot(path)
-        log(f"[DEBUG] Screenshot guardada: {path}")
-    except Exception as e:
-        log(f"[DEBUG] Falhou guardar screenshot ({e})")
+    return
 
+# Desativado: não guardar HTML para acelerar
 def save_html(driver, name):
-    ensure_dirs()
-    path = os.path.join(SCREENSHOT_DIR, name)
-    try:
-        html = driver.page_source
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(html)
-        log(f"[DEBUG] HTML dump guardado: {path}")
-    except Exception as e:
-        log(f"[DEBUG] Falhou guardar HTML dump ({e})")
+    return
 
 def open_url_with_timeout(driver, url, timeout=PAGELOAD_TIMEOUT, soft_wait=1.2):
     driver.set_page_load_timeout(timeout)
@@ -82,7 +68,6 @@ def open_url_with_timeout(driver, url, timeout=PAGELOAD_TIMEOUT, soft_wait=1.2):
     time.sleep(soft_wait)
 
 def try_click(driver, el, prefix="click"):
-    ts = int(time.time())
     try:
         driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
         time.sleep(WAIT_SHORT)
@@ -91,21 +76,18 @@ def try_click(driver, el, prefix="click"):
 
     try:
         ActionChains(driver).move_to_element(el).pause(0.05).click(el).perform()
-        save_shot(driver, f"{prefix}_action_{ts}.png")
         return True
     except Exception:
         pass
 
     try:
         el.click()
-        save_shot(driver, f"{prefix}_selenium_{ts}.png")
         return True
     except Exception:
         pass
 
     try:
         driver.execute_script("arguments[0].click();", el)
-        save_shot(driver, f"{prefix}_js_{ts}.png")
         return True
     except Exception:
         pass
@@ -120,7 +102,6 @@ def try_click(driver, el, prefix="click"):
         """)
         time.sleep(WAIT_SHORT)
         driver.execute_script("arguments[0].click();", el)
-        save_shot(driver, f"{prefix}_after_overlays_{ts}.png")
         return True
     except Exception:
         pass
@@ -308,22 +289,6 @@ def clicar_noticias_tab(driver):
     log("[DEBUG] Não consegui clicar em 'Notícias' com os métodos disponíveis.")
     return False
 
-# --------- Fallback leve: entrar em Notícias por URL (sem mudar lógica) ---------
-def _get_current_query(driver):
-    try:
-        p = urlparse(driver.current_url)
-        qs = parse_qs(p.query)
-        return (qs.get("q", [""])[0] or "").strip()
-    except Exception:
-        return ""
-
-def ir_para_noticias_por_url(driver, keyword):
-    q = _get_current_query(driver) or (keyword or "")
-    url = f"https://www.google.com/search?q={quote_plus(q)}&hl=pt-PT&gl=pt&tbm=nws"
-    log("[DEBUG] A forçar 'Notícias' por URL (tbm=nws).")
-    open_url_with_timeout(driver, url, soft_wait=1.0)
-    _esperar_entrar_em_noticias(driver, timeout=6)
-
 def aplicar_filtro_tempo(driver, filtro_tempo):
     if not filtro_tempo or not filtro_tempo.strip():
         return
@@ -451,8 +416,8 @@ def coletar_links_noticias(driver, excluir_br=False):
 
     log(f"[DEBUG] {len(links)} links recolhidos.")
     if not links:
-        save_shot(driver, f"no_results_serp_{int(time.time())}.png")
-        save_html(driver, f"no_results_serp_{int(time.time())}.html")
+        # sem screenshots/HTML dumps
+        pass
     return links
 
 # -------------------------------------------------------------
@@ -520,7 +485,6 @@ def visitar_links(driver, links, keyword, resultados):
             })
         except Exception as e:
             log(f"[ERRO visitar_link]: {e}")
-            save_shot(driver, f"erro_visitar_link_{int(time.time())}.png")
             resultados.append({
                 "link": href_google,
                 "titulo": "Erro",
@@ -597,14 +561,11 @@ def executar_scraper_google(keyword, filtro_tempo):
         aceitar_cookies_se_existem(driver, prefix="google_cookies_ncr")
 
         abrir_pesquisa_google(driver, keyword)
-        # clicar separador Notícias (fluxo original)
+        # clicar separador Notícias (fluxo original, agora mais robusto)
         if not clicar_noticias_tab(driver):
             log("[DEBUG] Tab Notícias não encontrada/clicável.")
-            save_shot(driver, f"no_news_tab_{int(time.time())}.png")
-            save_html(driver, f"no_news_tab_{int(time.time())}.html")
-            # em vez de parar, força por URL e continua
-            log("[DEBUG] A forçar 'Notícias' por URL…")
-            ir_para_noticias_por_url(driver, keyword)
+            # sem screenshot/dump para acelerar
+            return resultados
 
         aplicar_filtro_tempo(driver, filtro_tempo)
         clicar_linguagem(driver)
