@@ -450,24 +450,22 @@ if menu == "Scraper" and role_name in ["admin", "account"]:
                             st.write(f"**Segmento:** {segmento}")
                             st.write(f"**Tier:** {tier}")
 
-                        if st.button("✅ Confirmar e Substituir", key=f"dir_confirma_{i}"):
-                            update_media(
-                                media_id=st.session_state[f"dir_pending_id_{i}"],
-                                nome=st.session_state[f"dir_pending_nome_{i}"],
-                                url=st.session_state[f"dir_pending_link_{i}"],
-                                tipologia=st.session_state[f"dir_pending_tipologia_{i}"],
-                                segmento=st.session_state[f"dir_pending_segmento_{i}"],
-                                tier=st.session_state[f"dir_pending_tier_{i}"]
-                            )
-                            st.success("Media atualizada com sucesso!")
-                            st.rerun()
-                        elif st.button("❌ Cancelar", key=f"dir_cancelar_{i}"):
-                            st.info("Cancelado.")
-                    else:
-                        insert_media(nome, link, cliente_id, tipologia, segmento, tier)
-                        st.success("Guardado com sucesso!")
-                        st.rerun()
-
+                        if st.button("✅ Confirmar e Substituir", key=f"dir_confirma_{i}_{existente[0]}"):
+                             update_media(
+                             media_id=existente[0],
+                             nome=nome,
+                             url=link,
+                             tipologia=tipologia,
+                             segmento=segmento,
+                             tier=tier
+                                          )
+                             st.success("Media atualizada com sucesso!")
+                             st.rerun()
+                        elif st.button("❌ Cancelar", key=f"dir_cancel_{i}"):
+                                st.info("Operação cancelada.")
+                        else:
+                            insert_media(nome, link, cliente_id, tipologia, segmento, tier)
+                            st.success("Guardado com sucesso!")
 
 
 
