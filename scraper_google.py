@@ -343,10 +343,13 @@ def _hard_clean_page(driver):
     gc.collect()
 
 def visitar_links(driver, links, keyword, resultados, results_url, page_index):
+    global options  # <--- para reiniciar o driver no crash
     log(f"[DEBUG] (pág. {page_index}) A visitar {len(links)} links...")
     kw_lower = (keyword or "").lower()
 
-    for idx, (href_google, data_pub) in enumerate(links, start=1):
+    idx = 1
+    while idx <= len(links):
+        href_google, data_pub = links[idx-1]
         inicio_link = time.time()
         try:
             dominio = urlparse(href_google).netloc or "google"
@@ -387,6 +390,8 @@ def visitar_links(driver, links, keyword, resultados, results_url, page_index):
                 log(f"[DEBUG] (pág. {page_index}) ({idx}/{len(links)}) {site_name} | {'ENCONTRADA' if encontrou else 'NÃO ENCONTRADA'} | {int(time.time()-inicio_link)}s")
 
         except Exception as e:
+            # PATCH: Se crash de renderer, reinicia Chrome e continua no próximo link!
+            is_renderer_timeout = 'Timed out receiving message from renderer' in str(e)
             result = {
                 "link": href_google,
                 "titulo": "Erro",
@@ -398,6 +403,20 @@ def visitar_links(driver, links, keyword, resultados, results_url, page_index):
             resultados.append(result)
             write_result_immediately(result)
             log(f"[ERRO visitar_link] (pág. {page_index}) ({idx}/{len(links)}): {e}")
+
+            if is_renderer_timeout:
+                log("[RESTART] Detetado crash do Chrome renderer. A reiniciar o driver!")
+                try:
+                    driver.quit()
+                except Exception:
+                    pass
+                driver = uc.Chrome(options=options)
+                driver.set_page_load_timeout(PAGELOAD_TIMEOUT)
+                driver.set_script_timeout(SCRIPT_TIMEOUT)
+                driver.set_window_size(1120, 640)
+                open_url_with_timeout(driver, results_url, soft_wait=0.8)
+                time.sleep(0.5)  # deixa o Chrome respirar
+
         finally:
             try:
                 driver.get("about:blank")
@@ -409,6 +428,7 @@ def visitar_links(driver, links, keyword, resultados, results_url, page_index):
                 open_url_with_timeout(driver, results_url, soft_wait=0.3)
             except Exception:
                 pass
+        idx += 1
 
 def proxima_pagina(driver, current_page_index):
     try:
@@ -440,6 +460,7 @@ def proxima_pagina(driver, current_page_index):
     return False
 
 def executar_scraper_google(keyword, filtro_tempo):
+    global options
     log("[DEBUG] A iniciar o scraper do Google (adaptação fiel).")
     options = uc.ChromeOptions()
     options.add_argument("--headless=new")
