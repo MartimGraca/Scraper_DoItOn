@@ -22,14 +22,14 @@ SCREENSHOT_DIR = "fotos_erros"
 LOG_FILE = os.path.join(SCREENSHOT_DIR, "scraper.log")
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
 
-# Timeouts mais curtos (SERP só no Google; artigos via HTTP)
+# Timeouts curtos (Selenium só na SERP; artigos via HTTP requests)
 PAGELOAD_TIMEOUT = int(os.getenv("PAGELOAD_TIMEOUT", "8") or "8")   # só SERP
 SCRIPT_TIMEOUT = int(os.getenv("SCRIPT_TIMEOUT", "6") or "6")
 WAIT_SHORT = 0.12
 
 # Limites/agressividade
-MAX_LINKS_PER_KEYWORD = int(os.getenv("MAX_LINKS_PER_KEYWORD", "0") or "0")  # 0 = sem limite de links
-MAX_PAGES_PER_KEYWORD = int(os.getenv("MAX_PAGES_PER_KEYWORD", "1") or "1")  # quantas páginas da SERP
+MAX_LINKS_PER_KEYWORD = int(os.getenv("MAX_LINKS_PER_KEYWORD", "0") or "0")  # 0 = sem limite de links (não é usado para cortar)
+MAX_PAGES_PER_KEYWORD = int(os.getenv("MAX_PAGES_PER_KEYWORD", "0") or "0")  # 0 = sem limite de páginas
 MAX_SECONDS_PER_LINK = int(os.getenv("MAX_SECONDS_PER_LINK", "7") or "7")    # timeout por artigo (HTTP)
 MAX_SECONDS_PER_KEYWORD = int(os.getenv("MAX_SECONDS_PER_KEYWORD", "0") or "0")  # 0 = sem limite total
 FAST_MODE = int(os.getenv("FAST_MODE", "1") or "1")
@@ -39,7 +39,7 @@ RESULTS_JSONL_PATH = os.getenv("RESULTS_JSONL_PATH", "").strip()  # se vazio, ac
 # HTTP limites
 HTTP_CONNECT_TIMEOUT = int(os.getenv("HTTP_CONNECT_TIMEOUT", "4") or "4")
 HTTP_READ_TIMEOUT = int(os.getenv("HTTP_READ_TIMEOUT", str(MAX_SECONDS_PER_LINK)) or str(MAX_SECONDS_PER_LINK))
-HTTP_MAX_BYTES = int(os.getenv("HTTP_MAX_BYTES", str(1_500_000)) or "1500000")  # lê no máx ~1.5MB para poupar memória
+HTTP_MAX_BYTES = int(os.getenv("HTTP_MAX_BYTES", str(1_500_000)) or "1500000")  # lê no máx ~1.5MB por página
 TEXT_MAX_CHARS = int(os.getenv("TEXT_MAX_CHARS", str(80_000)) or "80000")
 
 def ensure_dirs():
@@ -347,7 +347,6 @@ TAG_RE = re.compile(r"<[^>]+>")
 
 def _extract_text_from_html(html, max_chars=TEXT_MAX_CHARS):
     try:
-        # remover scripts/styles e tags para texto simples
         html = SCRIPT_RE.sub(" ", html)
         html = STYLE_RE.sub(" ", html)
         text = TAG_RE.sub(" ", html)
@@ -359,12 +358,10 @@ def _extract_text_from_html(html, max_chars=TEXT_MAX_CHARS):
         return ""
 
 def _http_fetch_text(session, url, timeout_connect, timeout_read, max_bytes, headers):
-    # Ler apenas até max_bytes
     with session.get(url, timeout=(timeout_connect, timeout_read), stream=True, headers=headers, allow_redirects=True) as resp:
         status = resp.status_code
         if status >= 400:
             raise RuntimeError(f"HTTP {status}")
-        # escolher encoding
         encoding = resp.encoding or "utf-8"
         total = 0
         chunks = []
@@ -389,7 +386,7 @@ def visitar_links_http(links, keyword, resultados, session):
         "User-Agent": USER_AGENT,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "pt-PT,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Connection": "close",  # fechar conexão para poupar memória em hosts problemáticos
+        "Connection": "close",
     }
 
     for idx, (href, data_pub) in enumerate(links, start=1):
@@ -419,7 +416,6 @@ def visitar_links_http(links, keyword, resultados, session):
                 log(f"[DEBUG] ({idx}/{len(links)}) TIMEOUT após {int(time.time()-start_t)}s.")
                 continue
 
-            # título simples
             title_match = re.search(r"<title[^>]*>(.*?)</title>", html, flags=re.IGNORECASE | re.DOTALL)
             titulo = re.sub(r"\s+", " ", title_match.group(1)).strip() if title_match else "Sem título"
 
@@ -451,11 +447,10 @@ def visitar_links_http(links, keyword, resultados, session):
             write_result_immediately(result)
             log(f"[ERRO visitar_link_http] ({idx}/{len(links)}): {e}")
         finally:
-            # libertar rápido
             gc.collect()
 
 # -------------------------------------------------------------
-# Paginação da SERP
+# Paginação da SERP (sem limite quando MAX_PAGES_PER_KEYWORD=0)
 # -------------------------------------------------------------
 def proxima_pagina(driver):
     log("[DEBUG] Próxima página...")
@@ -471,6 +466,12 @@ def proxima_pagina(driver):
         open_url_with_timeout(driver, new_url, soft_wait=0.3)
         if driver.current_url == prev:
             log("[DEBUG] URL não mudou ao paginar — a parar.")
+            return False
+        # Verifica se ainda existem resultados na nova página
+        try:
+            WebDriverWait(driver, 4).until(EC.presence_of_element_located((By.XPATH, "//div[@role='heading']")))
+        except Exception:
+            log("[DEBUG] Sem resultados na nova página — a parar.")
             return False
         return True
     except Exception:
@@ -533,7 +534,7 @@ def executar_scraper_google(keyword, filtro_tempo):
         except Exception:
             pass
 
-        page_count = 0
+        page_index = 1
         keyword_deadline = (time.time() + MAX_SECONDS_PER_KEYWORD) if MAX_SECONDS_PER_KEYWORD else None
 
         while True:
@@ -545,13 +546,15 @@ def executar_scraper_google(keyword, filtro_tempo):
             if links:
                 visitar_links_http(links, keyword, resultados, session)
 
-            page_count += 1
-            if MAX_PAGES_PER_KEYWORD and page_count >= MAX_PAGES_PER_KEYWORD:
-                log(f"[DEBUG] A parar por limite de páginas: {page_count}/{MAX_PAGES_PER_KEYWORD}")
+            if MAX_PAGES_PER_KEYWORD and page_index >= MAX_PAGES_PER_KEYWORD:
+                log(f"[DEBUG] A parar por limite de páginas: {page_index}/{MAX_PAGES_PER_KEYWORD}")
                 break
 
             if not proxima_pagina(driver):
                 break
+
+            page_index += 1
+
     finally:
         try:
             driver.quit()
