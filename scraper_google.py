@@ -20,13 +20,13 @@ from selenium.common.exceptions import TimeoutException, WebDriverException
 SCREENSHOT_DIR = "fotos_erros"
 LOG_FILE = os.path.join(SCREENSHOT_DIR, "scraper.log")
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
-PAGELOAD_TIMEOUT = 10      # <-- mais pequeno
-SCRIPT_TIMEOUT = 7         # <-- mais pequeno
+PAGELOAD_TIMEOUT = 10      # mais pequeno
+SCRIPT_TIMEOUT = 7         # mais pequeno
 WAIT_SHORT = 0.12
 
 MAX_LINKS_PER_KEYWORD = int(os.getenv("MAX_LINKS_PER_KEYWORD", "0") or "0")  # 0 = sem limite!
 MAX_PAGES_PER_KEYWORD = int(os.getenv("MAX_PAGES_PER_KEYWORD", "1") or "1")
-MAX_SECONDS_PER_LINK = int(os.getenv("MAX_SECONDS_PER_LINK", "7") or "7")     # <-- mais pequeno
+MAX_SECONDS_PER_LINK = int(os.getenv("MAX_SECONDS_PER_LINK", "7") or "7")     # mais pequeno
 MAX_SECONDS_PER_KEYWORD = int(os.getenv("MAX_SECONDS_PER_KEYWORD", "0") or "0")
 FAST_MODE = int(os.getenv("FAST_MODE", "1") or "1")
 DO_NOT_ACCEPT_SITE_COOKIES = int(os.getenv("DO_NOT_ACCEPT_SITE_COOKIES", "1") or "1")
@@ -341,23 +341,39 @@ def _hard_clean_page(driver):
 def visitar_links(driver, links, keyword, resultados, results_url):
     log(f"[DEBUG] A visitar {len(links)} links...")
     kw_lower = (keyword or "").lower()
+    options = driver.options  # guardar as opções do driver para recriar depois
 
     for idx, (href_google, data_pub) in enumerate(links, start=1):
         inicio_link = time.time()
         try:
+            # FECHAR driver antigo para libertar memória
+            try:
+                driver.quit()
+            except Exception:
+                pass
+            gc.collect()
+            # CRIAR novo driver para este link
+            driver = uc.Chrome(options=options)
+            driver.set_page_load_timeout(PAGELOAD_TIMEOUT)
+            driver.set_script_timeout(SCRIPT_TIMEOUT)
+            driver.set_window_size(1120, 640)
+
+            # Voltar à SERP antes de abrir o link
+            open_url_with_timeout(driver, results_url, soft_wait=0.18)
+
             dominio = urlparse(href_google).netloc or "google"
             log(f"[DEBUG] ({idx}/{len(links)}) Abrir: {dominio}")
 
-            open_url_with_timeout(driver, href_google, soft_wait=0.32)
+            open_url_with_timeout(driver, href_google, soft_wait=0.27)
 
             if not DO_NOT_ACCEPT_SITE_COOKIES:
                 aceitar_cookies_google(driver, time_budget_s=(2 if FAST_MODE else 4))
 
             if time.time() - inicio_link > MAX_SECONDS_PER_LINK:
                 result = {
-                    "link": driver.current_url,
+                    "link": href_google,
                     "titulo": "Timeout",
-                    "site": urlparse(driver.current_url).netloc,
+                    "site": dominio,
                     "status": "ERRO",
                     "data": data_pub,
                     "erro": f"TIMEOUT {int(time.time()-inicio_link)}s"
@@ -381,9 +397,7 @@ def visitar_links(driver, links, keyword, resultados, results_url):
                 resultados.append(result)
                 write_result_immediately(result)
                 log(f"[DEBUG] ({idx}/{len(links)}) {site_name} | {'ENCONTRADA' if encontrou else 'NÃO ENCONTRADA'} | {int(time.time()-inicio_link)}s")
-
         except Exception as e:
-            # Se crash renderer, apenas regista o erro e avança para o próximo link
             result = {
                 "link": href_google,
                 "titulo": "Erro",
@@ -395,18 +409,12 @@ def visitar_links(driver, links, keyword, resultados, results_url):
             resultados.append(result)
             write_result_immediately(result)
             log(f"[ERRO visitar_link] ({idx}/{len(links)}): {e}")
-
         finally:
             try:
-                driver.get("about:blank")
-                time.sleep(0.15)
+                driver.quit()
             except Exception:
                 pass
-            _hard_clean_page(driver)
-            try:
-                open_url_with_timeout(driver, results_url, soft_wait=0.22)
-            except Exception:
-                pass
+            gc.collect()
 
 def proxima_pagina(driver):
     log("[DEBUG] Próxima página...")
