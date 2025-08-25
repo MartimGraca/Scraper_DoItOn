@@ -32,6 +32,7 @@ MAX_LINKS_PER_KEYWORD = int(os.getenv("MAX_LINKS_PER_KEYWORD", "0") or "0")  # 0
 MAX_PAGES_PER_KEYWORD = int(os.getenv("MAX_PAGES_PER_KEYWORD", "0") or "0")  # 0 = sem limite de páginas
 MAX_SECONDS_PER_LINK = int(os.getenv("MAX_SECONDS_PER_LINK", "7") or "7")    # timeout por artigo (HTTP)
 MAX_SECONDS_PER_KEYWORD = int(os.getenv("MAX_SECONDS_PER_KEYWORD", "0") or "0")  # 0 = sem limite total
+MAX_EMPTY_SERP_PAGES = int(os.getenv("MAX_EMPTY_SERP_PAGES", "2") or "2")    # parar após N páginas seguidas sem novos links
 FAST_MODE = int(os.getenv("FAST_MODE", "1") or "1")
 DO_NOT_ACCEPT_SITE_COOKIES = int(os.getenv("DO_NOT_ACCEPT_SITE_COOKIES", "1") or "1")  # não usado em HTTP
 RESULTS_JSONL_PATH = os.getenv("RESULTS_JSONL_PATH", "").strip()  # se vazio, acumula em memória
@@ -255,7 +256,7 @@ def coletar_links_noticias(driver, excluir_br=False):
     log("[DEBUG] A recolher links das notícias...")
     raw_items = []
 
-    # Método 1: headings News
+    # Método 1: âncoras com heading dentro
     try:
         blocos = WebDriverWait(driver, 6).until(
             EC.presence_of_all_elements_located((By.XPATH, "//a[.//div[@role='heading'] or .//h3]"))
@@ -271,7 +272,7 @@ def coletar_links_noticias(driver, excluir_br=False):
     except Exception:
         pass
 
-    # Método 2: fallback por CSS específico do News
+    # Método 2: fallback News CSS
     if not raw_items:
         try:
             anchors = driver.find_elements(By.CSS_SELECTOR, "a.WlydOe")
@@ -452,7 +453,7 @@ def visitar_links_http(links, keyword, resultados, session):
             gc.collect()
 
 # -------------------------------------------------------------
-# Paginação da SERP (robusta, sem limite quando MAX_PAGES_PER_KEYWORD=0)
+# Paginação da SERP (robusta)
 # -------------------------------------------------------------
 def _get_start_param(url_str):
     try:
@@ -469,11 +470,10 @@ def proxima_pagina(driver):
         current_url = driver.current_url
         cur_start = _get_start_param(current_url)
 
-        # 1) Tentar via URL com parse_qs/urlencode(doseq=True), preservando tudo
+        # Tentar via URL preservando todos os parâmetros
         p = urlparse(current_url)
         qs = parse_qs(p.query)
         qs["start"] = [str(cur_start + 10)]
-        # garantir que continuamos em news
         if qs.get("tbm", [""])[0] != "nws":
             qs["tbm"] = ["nws"]
         new_query = urlencode(qs, doseq=True)
@@ -485,7 +485,7 @@ def proxima_pagina(driver):
             log(f"[DEBUG] Mudou para a página start={new_start} (via URL).")
             return True
 
-        # 2) Fallback: tentar clicar no botão/link de próxima página (várias localizações/idiomas)
+        # Fallback: tentar clicar
         selectors = [
             (By.ID, "pnnext"),
             (By.CSS_SELECTOR, "a#pnnext"),
@@ -570,6 +570,8 @@ def executar_scraper_google(keyword, filtro_tempo):
             pass
 
         page_index = 1
+        empty_pages = 0
+        seen_links = set()
         keyword_deadline = (time.time() + MAX_SECONDS_PER_KEYWORD) if MAX_SECONDS_PER_KEYWORD else None
 
         while True:
@@ -578,16 +580,32 @@ def executar_scraper_google(keyword, filtro_tempo):
                 break
 
             links = coletar_links_noticias(driver, excluir_br=False)
-            if links:
-                visitar_links_http(links, keyword, resultados, session)
 
+            # Filtra duplicados entre páginas; se não houver novos, conta como página vazia
+            new_links = []
+            for href, data_pub in links:
+                if href not in seen_links:
+                    seen_links.add(href)
+                    new_links.append((href, data_pub))
+
+            if new_links:
+                empty_pages = 0  # reset contador de páginas vazias
+                visitar_links_http(new_links, keyword, resultados, session)
+            else:
+                empty_pages += 1
+                log(f"[DEBUG] Página sem novos links ({empty_pages}/{MAX_EMPTY_SERP_PAGES}).")
+                if empty_pages >= MAX_EMPTY_SERP_PAGES:
+                    log("[DEBUG] Sem novos links após páginas consecutivas — a parar paginação.")
+                    break
+
+            # Limite opcional de páginas
             if MAX_PAGES_PER_KEYWORD and page_index >= MAX_PAGES_PER_KEYWORD:
                 log(f"[DEBUG] A parar por limite de páginas: {page_index}/{MAX_PAGES_PER_KEYWORD}")
                 break
 
+            # Avançar de página
             if not proxima_pagina(driver):
                 break
-
             page_index += 1
 
     finally:
