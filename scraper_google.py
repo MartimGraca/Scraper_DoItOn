@@ -241,7 +241,7 @@ def aplicar_filtro_tempo_por_url(driver, filtro_tempo):
         p = urlparse(driver.current_url)
         qs = parse_qs(p.query)
         qs["tbs"] = [f"qdr:{code}"]
-        newq = urlencode({k: (v[0] if isinstance(v, list) else v) for k, v in qs.items()})
+        newq = urlencode(qs, doseq=True)
         new_url = urlunparse((p.scheme, p.netloc, p.path, p.params, newq, p.fragment))
         open_url_with_timeout(driver, new_url, soft_wait=0.3)
         log(f"[DEBUG] Filtro aplicado por URL: tbs=qdr:{code}")
@@ -254,13 +254,14 @@ def aplicar_filtro_tempo_por_url(driver, filtro_tempo):
 def coletar_links_noticias(driver, excluir_br=False):
     log("[DEBUG] A recolher links das notícias...")
     raw_items = []
+
+    # Método 1: headings News
     try:
         blocos = WebDriverWait(driver, 6).until(
-            EC.presence_of_all_elements_located((By.XPATH, "//div[@role='heading' and contains(@class,'n0jPhd')]"))
+            EC.presence_of_all_elements_located((By.XPATH, "//a[.//div[@role='heading'] or .//h3]"))
         )
-        for bloco in blocos:
+        for a_el in blocos:
             try:
-                a_el = bloco.find_element(By.XPATH, ".//ancestor::a[1]")
                 href = a_el.get_attribute("href") or ""
                 if href:
                     y = a_el.location.get("y", 0)
@@ -270,9 +271,10 @@ def coletar_links_noticias(driver, excluir_br=False):
     except Exception:
         pass
 
+    # Método 2: fallback por CSS específico do News
     if not raw_items:
         try:
-            anchors = driver.find_elements(By.XPATH, "//a[.//div[@role='heading'] or .//h3]")
+            anchors = driver.find_elements(By.CSS_SELECTOR, "a.WlydOe")
             for a_el in anchors:
                 try:
                     href = a_el.get_attribute("href") or ""
@@ -450,31 +452,64 @@ def visitar_links_http(links, keyword, resultados, session):
             gc.collect()
 
 # -------------------------------------------------------------
-# Paginação da SERP (sem limite quando MAX_PAGES_PER_KEYWORD=0)
+# Paginação da SERP (robusta, sem limite quando MAX_PAGES_PER_KEYWORD=0)
 # -------------------------------------------------------------
+def _get_start_param(url_str):
+    try:
+        p = urlparse(url_str)
+        qs = parse_qs(p.query)
+        start = int(qs.get("start", ["0"])[0] or "0")
+        return start
+    except Exception:
+        return 0
+
 def proxima_pagina(driver):
     log("[DEBUG] Próxima página...")
     try:
-        parsed = urlparse(driver.current_url)
-        qs_pairs = [p for p in parsed.query.split("&") if p]
-        qs = dict([kv if "=" in (kv := p.split("=",1)) else (p,"") for p in qs_pairs])
-        start = int(qs.get("start","0") or "0")
-        qs["start"] = str(start + 10)
-        new_query = "&".join([f"{k}={v}" for k,v in qs.items()])
-        new_url = urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
-        prev = driver.current_url
+        current_url = driver.current_url
+        cur_start = _get_start_param(current_url)
+
+        # 1) Tentar via URL com parse_qs/urlencode(doseq=True), preservando tudo
+        p = urlparse(current_url)
+        qs = parse_qs(p.query)
+        qs["start"] = [str(cur_start + 10)]
+        # garantir que continuamos em news
+        if qs.get("tbm", [""])[0] != "nws":
+            qs["tbm"] = ["nws"]
+        new_query = urlencode(qs, doseq=True)
+        new_url = urlunparse((p.scheme, p.netloc, p.path, p.params, new_query, p.fragment))
+
         open_url_with_timeout(driver, new_url, soft_wait=0.3)
-        if driver.current_url == prev:
-            log("[DEBUG] URL não mudou ao paginar — a parar.")
-            return False
-        # Verifica se ainda existem resultados na nova página
-        try:
-            WebDriverWait(driver, 4).until(EC.presence_of_element_located((By.XPATH, "//div[@role='heading']")))
-        except Exception:
-            log("[DEBUG] Sem resultados na nova página — a parar.")
-            return False
-        return True
-    except Exception:
+        new_start = _get_start_param(driver.current_url)
+        if driver.current_url != current_url and new_start > cur_start:
+            log(f"[DEBUG] Mudou para a página start={new_start} (via URL).")
+            return True
+
+        # 2) Fallback: tentar clicar no botão/link de próxima página (várias localizações/idiomas)
+        selectors = [
+            (By.ID, "pnnext"),
+            (By.CSS_SELECTOR, "a#pnnext"),
+            (By.CSS_SELECTOR, "a[aria-label='Next page']"),
+            (By.CSS_SELECTOR, "a[aria-label='Próxima página']"),
+            (By.XPATH, "//a[@aria-label='Next page' or @aria-label='Próxima página' or contains(.,'Seguinte') or contains(.,'Próxima') or contains(.,'Next')]"),
+        ]
+        for by, sel in selectors:
+            try:
+                el = WebDriverWait(driver, 3).until(EC.element_to_be_clickable((by, sel)))
+                if try_click(driver, el, prefix="pnnext"):
+                    time.sleep(0.4)
+                    new_start = _get_start_param(driver.current_url)
+                    if driver.current_url != current_url and new_start > cur_start:
+                        log(f"[DEBUG] Mudou para a página start={new_start} (via clique).")
+                        return True
+            except Exception:
+                continue
+
+        log("[DEBUG] Não foi possível avançar para a próxima página.")
+        return False
+
+    except Exception as e:
+        log(f"[DEBUG] Erro na paginação: {e}")
         return False
 
 # -------------------------------------------------------------
