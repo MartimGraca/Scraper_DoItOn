@@ -116,8 +116,10 @@ def insert_media(nome, url, cliente_id, tipologia, segmento, tier):
     conn.commit()
 
 def media_existe(nome, cliente_id):
+    # Devolve na ordem que o UI espera:
+    # (id, nome, url, tipologia, segmento, tier)
     cursor.execute(
-        "SELECT * FROM media WHERE nome = %s AND cliente_id = %s",
+        "SELECT id, nome, url, tipologia, segmento, tier FROM media WHERE nome = %s AND cliente_id = %s LIMIT 1",
         (nome, cliente_id)
     )
     return cursor.fetchone()
@@ -345,15 +347,16 @@ if menu == "Scraper" and role_name in ["admin", "account"]:
                                 st.write(f"**Tier:** {tier}")
 
                             if st.button("✅ Confirmar e Substituir", key=f"dir_confirma_{i}_{existente[0]}"):
-                                update_media(
-                                    media_id=existente[0],
-                                    nome=nome,
-                                    url=link,
-                                    tipologia=tipologia,
-                                    segmento=segmento,
-                                    tier=tier
-                                )
-                                st.success("Media atualizada com sucesso!")
+                             update_media(
+                             media_id=existente[0],
+                             nome=nome,
+                             url=link,
+                             tipologia=tipologia,
+                             segmento=segmento,
+                             tier=tier
+                                          )
+                             st.success("Media atualizada com sucesso!")
+                             st.rerun()
                             elif st.button("❌ Cancelar", key=f"dir_cancel_{i}"):
                                 st.info("Operação cancelada.")
                         else:
