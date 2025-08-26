@@ -643,20 +643,21 @@ if menu == "Scraper" and role_name in ["admin", "account"]:
 # ---------- MINHA BASE DE MEDIA (Robusto) ----------
 elif modo_scraper == "Minha Base de Media":
     st.subheader("🧭 Scraper da Minha Base de Media")
-    st.caption("Pesquisa em TODOS os sites da tabela 'media'. Os registos serão guardados/atualizados para a Empresa selecionada acima.")
-    st.caption(f"(debug) modo_scraper = {modo_scraper!r}")  # podes remover depois
+    st.caption("Pesquisa em TODOS os sites da tabela 'media'. Guarda/atualiza na Empresa selecionada acima.")
 
-    # Import seguro do scraper interno
+    # Import protegido com mensagem de erro visível
     try:
-        from scrapers.mediaDB_scraper import scrape_sites
+        from scrapers.mediaDB_scraper import scrape_sites, healthcheck
+        st.caption(f"(debug) import OK: healthcheck={healthcheck()}")
     except Exception as e:
         st.error(f"Não consegui importar scrapers/mediaDB_scraper.py: {e}")
-        st.info("Confirma: 1) o ficheiro chama-se exatamente mediaDB_scraper.py; 2) existe scrapers/__init__.py.")
+        st.info("Confirma o nome do ficheiro e que existe scrapers/__init__.py (mesmo vazio).")
         st.stop()
 
-    # Destino de gravação = empresa selecionada no topo
+    # Destino = empresa selecionada em cima (não afeta a pesquisa)
     cliente_destino = cliente_id
 
+    # Inputs base — DEVEM aparecer sempre (mesmo sem clicar em nada)
     kw_int = st.text_input("Palavra‑chave", key="mdb_kw")
 
     colA, colB, colC = st.columns(3)
@@ -665,7 +666,7 @@ elif modo_scraper == "Minha Base de Media":
     with colB:
         max_por_site = st.number_input("Máx. resultados por site", min_value=1, max_value=10, value=3, step=1, key="mdb_max_site")
     with colC:
-        st.caption("Defaults para preencher automaticamente os resultados abaixo.")
+        st.caption("Defaults para preencher automaticamente os resultados.")
 
     colD, colE, colF = st.columns(3)
     with colD:
@@ -673,9 +674,9 @@ elif modo_scraper == "Minha Base de Media":
     with colE:
         default_segmento = st.selectbox("Default Segmento", ["Tecnologia", "Político", "Saúde", "Outro"], index=0, key="mdb_def_seg")
     with colF:
-        default_tier = st.selectbox("Default Tier", [1, 2, 3, 4], index=3, key="mdb_def_tier")  # 4 por omissão
+        default_tier = st.selectbox("Default Tier", [1, 2, 3, 4], index=3, key="mdb_def_tier")
 
-    # Lê TODOS os sites da tabela media
+    # Lê TODOS os sites da tabela media (independente da empresa)
     def fetch_all_medias(limit_sites: int | None):
         try:
             cursor.execute("SELECT id, nome, url FROM media WHERE url IS NOT NULL AND url <> '' ORDER BY id DESC")
@@ -693,12 +694,16 @@ elif modo_scraper == "Minha Base de Media":
             st.warning("Indica uma palavra‑chave.")
         else:
             with st.spinner("A pesquisar nos sites de media..."):
-                medias_lista = fetch_all_medias(limite_sites)
-                resultados = scrape_sites(medias_lista, kw_int.strip(), max_items_per_site=max_por_site)
+                try:
+                    medias_lista = fetch_all_medias(limite_sites)
+                    resultados = scrape_sites(medias_lista, kw_int.strip(), max_items_per_site=max_por_site)
+                except Exception as e:
+                    st.exception(e)
+                    resultados = []
             st.session_state["mdb_resultados"] = resultados
             st.success(f"Encontrados {len(resultados)} resultados.")
 
-    # Render de resultados + Guardar / Confirmar e Substituir (mesmo padrão dos outros)
+    # Render dos resultados (se houver)
     for i, r in enumerate(st.session_state.get("mdb_resultados", [])):
         titulo = r.get("title") or "Sem título"
         link = r.get("url") or ""
@@ -709,7 +714,6 @@ elif modo_scraper == "Minha Base de Media":
             st.write(f"Media detectada: {site_name}  •  Fonte: {fonte}")
             st.markdown(f"[🌐 Abrir Link]({link})", unsafe_allow_html=True)
 
-            # Inputs por resultado (preenchidos com defaults)
             nome_sugerido = extrair_nome_midia(site_name, titulo)
             nome = st.text_input("📝 Nome da Media", nome_sugerido, key=f"mdb_nome_{i}")
             tipologia = st.selectbox("📺 Tipologia", ["Online", "TV", "Rádio", "Imprensa"], index=["Online","TV","Rádio","Imprensa"].index(default_tipologia), key=f"mdb_tipo_{i}")
@@ -722,9 +726,8 @@ elif modo_scraper == "Minha Base de Media":
             state_base = f"mdb_{i}"
 
             if st.button("💾 Guardar", key=f"mdb_guardar_{i}"):
-                existente = media_existe(nome, cliente_destino)  # (id, nome, url, tipologia, segmento, tier) ou None
+                existente = media_existe(nome, cliente_destino)
 
-                # Verificar por URL antes de inserir
                 if not existente:
                     ex_url = media_por_url(link)
                     if ex_url:
@@ -739,7 +742,6 @@ elif modo_scraper == "Minha Base de Media":
                             st.stop()
 
                 if existente:
-                    # Guardar pendentes + existentes p/ confirmação
                     st.session_state[f"{state_base}_pending_nome"] = nome
                     st.session_state[f"{state_base}_pending_tipologia"] = tipologia
                     st.session_state[f"{state_base}_pending_segmento"] = segmento
@@ -756,12 +758,10 @@ elif modo_scraper == "Minha Base de Media":
                     st.session_state[f"{state_base}_show_confirm"] = True
                     st.rerun()
                 else:
-                    # Inserção direta
                     insert_media(nome, link, cliente_destino, tipologia, segmento, tier)
                     st.success("Guardado com sucesso!")
                     st.rerun()
 
-            # Confirmação fora do clique Guardar
             if st.session_state.get(f"{state_base}_show_confirm", False):
                 pend_id = st.session_state.get(f"{state_base}_pending_id")
                 pend_nome = st.session_state.get(f"{state_base}_pending_nome")
