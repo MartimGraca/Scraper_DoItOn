@@ -303,7 +303,7 @@ else:
 import nest_asyncio
 nest_asyncio.apply()
 
-from scrapers.media_db_scraper import scrape_sites  # NOVO: scraper interno da BD de media
+from mediaDB_scraper import scrape_sites  # NOVO: scraper interno da BD de media
 
 if menu == "Scraper" and role_name in ["admin", "account"]:
     st.title("Web Scraper")
