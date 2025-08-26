@@ -1,14 +1,18 @@
 FROM python:3.10-slim
 
-# Dependências de sistema (inclui fontes modernas e libs necessárias)
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+# Armazenar browsers do Playwright dentro do container/projeto
+ENV PLAYWRIGHT_BROWSERS_PATH=0
+
+# Dependências de sistema necessárias para o Chromium/Playwright
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
     wget \
     gnupg \
-    ca-certificates \
     xdg-utils \
     fonts-liberation \
     fonts-unifont \
-    fonts-ubuntu \
     libasound2 \
     libatk-bridge2.0-0 \
     libatk1.0-0 \
@@ -29,23 +33,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxrandr2 \
     libxrender1 \
     libxkbcommon0 \
+    libxshmfence1 \
     libcairo2 \
     libpango-1.0-0 \
-    && rm -rf /var/lib/apt/lists/*
+ && rm -rf /var/lib/apt/lists/*
 
-# (Opcional) Google Chrome — podes manter, embora o Playwright use o seu Chromium
+# (Opcional) Google Chrome — podes manter, mas o Playwright usará o seu Chromium
 RUN wget -O /tmp/google-chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb && \
     apt-get update && apt-get install -y /tmp/google-chrome.deb && rm /tmp/google-chrome.deb
-
 ENV CHROME_BIN=/usr/bin/google-chrome
-ENV PYTHONUNBUFFERED=1
-ENV PLAYWRIGHT_BROWSERS_PATH=0
 
-# Instalar Python deps
+# Instala dependências Python
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir -r requirements.txt
 
-# Garante que o pacote playwright está instalado e baixa o Chromium (sem --with-deps)
+# Garante playwright instalado e baixa o Chromium (sem --with-deps)
 RUN python -m pip show playwright >/dev/null 2>&1 || pip install --no-cache-dir playwright
 RUN python -m playwright install chromium
 
