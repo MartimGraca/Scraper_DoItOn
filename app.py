@@ -260,6 +260,7 @@ if st.session_state.user is None:
 
 
 # ----------- Layout Base -----------
+# ----------- Layout Base -----------
 st.set_page_config(page_title="ScraperApp", layout="wide")
 
 col1, col2 = st.columns([9, 1])
@@ -271,6 +272,50 @@ with col2:
     if st.button("Logout"):
         st.session_state.user = None
         st.rerun()
+
+    # Alterar password (logo abaixo do Logout)
+    with st.expander("Alterar password", expanded=False):
+        with st.form("form_change_password"):
+            current_pw = st.text_input("Password atual", type="password", key="pw_atual")
+            new_pw = st.text_input("Nova password", type="password", key="pw_nova")
+            confirm_pw = st.text_input("Confirmar nova password", type="password", key="pw_confirma")
+            submit_change = st.form_submit_button("Atualizar password")
+
+            if submit_change:
+                # Imports locais para garantir disponibilidade
+                from auth import check_password, hash_password, log_action
+
+                # Validações básicas
+                if not current_pw or not new_pw or not confirm_pw:
+                    st.error("Preenche todos os campos.")
+                elif new_pw != confirm_pw:
+                    st.error("A confirmação não corresponde à nova password.")
+                elif len(new_pw) < 8:
+                    st.error("A nova password deve ter pelo menos 8 caracteres.")
+                else:
+                    try:
+                        # Buscar hash atual do utilizador
+                        cursor.execute("SELECT password_hash FROM users WHERE id = %s", (st.session_state.user["id"],))
+                        row = cursor.fetchone()
+                        if not row:
+                            st.error("Utilizador não encontrado.")
+                        else:
+                            current_hash = row[0]
+                            if not check_password(current_pw, current_hash):
+                                st.error("Password atual incorreta.")
+                            elif check_password(new_pw, current_hash):
+                                st.warning("A nova password é igual à atual.")
+                            else:
+                                new_hash = hash_password(new_pw)
+                                cursor.execute(
+                                    "UPDATE users SET password_hash = %s WHERE id = %s",
+                                    (new_hash, st.session_state.user["id"])
+                                )
+                                conn.commit()
+                                st.success("✅ Password atualizada com sucesso.")
+                                log_action(st.session_state.user["email"], "alteração de password", "utilizador")
+                    except Exception as e:
+                        st.error(f"Erro ao atualizar password: {e}")
 
 
 # ----------- Sidebar -----------
