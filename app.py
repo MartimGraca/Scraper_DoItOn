@@ -630,14 +630,8 @@ if menu == "Scraper" and role_name in ["admin", "account"]:
 
     # ---------- MINHA BASE DE MEDIA (pesquisa direta na BD, visual "scraper") ----------
     elif modo_scraper == "Minha Base de Media":
-        st.subheader("🗂️ Web Scraper da Minha BD (sem raspar sites)")
-        # Import do módulo de pesquisa/preview (ficheiro na raiz do repo)
-        try:
-            from mediaDB_scraper import search_media, enrich_previews, healthcheck
-            st.caption(f"(debug) mediaDB_scraper import OK: {healthcheck()}")
-        except Exception as e:
-            st.error(f"Falha ao importar mediaDB_scraper.py: {e}")
-            st.stop()
+        st.subheader("🗂️ Web Scraper da Minha BD")
+        
 
         # UI de pesquisa (sem Empresa)
         keywords_raw = st.text_input("Palavras‑chave (separa por vírgulas)", key="mdb_kw")
