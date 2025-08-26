@@ -421,8 +421,8 @@ if menu == "Scraper" and role_name in ["admin", "account"]:
                             st.rerun()
 
     # ---------- GOOGLE NEWS ----------
-elif modo_scraper == "Google Notícias":
-    st.subheader("🔍 Pesquisa no Google Notícias")
+        elif modo_scraper == "Google Notícias":
+             st.subheader("🔍 Pesquisa no Google Notícias")
 
     keyword = st.text_input("Insira palavras-chave separadas por vírgula:", value=keywords_atuais)
     filtro_tempo = st.selectbox(
@@ -815,13 +815,6 @@ elif menu == "Admin DB" and st.session_state.user["is_admin"]:
         st.error(f"❌ Erro ao aceder à tabela '{selected_table}': {e}")
 
 
-
-
-# ----------- Página Gestão Utilizadores -----------
-
-# ... topo do ficheiro
-from auth import get_user, check_password, register_user, log_action, login_tentativas_check, login_falhou, get_role_name, is_admin_email
-# ... restante código
 
 # ----------- Página Gestão Utilizadores -----------
 if menu == "Gestão Utilizadores" and st.session_state.user["role_name"] == "admin":
