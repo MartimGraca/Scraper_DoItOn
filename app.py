@@ -260,8 +260,15 @@ if st.session_state.user is None:
 
 
 # ----------- Layout Base -----------
-# ----------- Layout Base -----------
 st.set_page_config(page_title="ScraperApp", layout="wide")
+
+# CSS leve para não quebrar texto de botões
+st.markdown("""
+    <style>
+    .stButton>button { white-space: nowrap; }
+    .small-caption { font-size: 0.85rem; color: #666; }
+    </style>
+""", unsafe_allow_html=True)
 
 col1, col2 = st.columns([9, 1])
 with col1:
@@ -273,49 +280,96 @@ with col2:
         st.session_state.user = None
         st.rerun()
 
-    # Alterar password (logo abaixo do Logout)
+    # -------- Alterar password (sem pedir password atual) --------
+    def _password_score(pw: str) -> tuple[int, list[str]]:
+        tips = []
+        score = 0
+        if not pw:
+            return 0, ["Digite uma password."]
+        length = len(pw)
+        has_lower = any(c.islower() for c in pw)
+        has_upper = any(c.isupper() for c in pw)
+        has_digit = any(c.isdigit() for c in pw)
+        has_special = any(not c.isalnum() for c in pw)
+
+        if length >= 8: score += 1
+        if length >= 12: score += 1
+        if has_lower and has_upper: score += 1
+        if has_digit: score += 1
+        if has_special: score += 1
+
+        if length < 8: tips.append("Use pelo menos 8 caracteres.")
+        if not (has_lower and has_upper): tips.append("Misture maiúsculas e minúsculas.")
+        if not has_digit: tips.append("Inclua números.")
+        if not has_special: tips.append("Inclua símbolos (ex.: !@#).")
+        return score, tips
+
+    def _gen_password(n: int = 14) -> str:
+        import secrets, string
+        pool = [
+            secrets.choice(string.ascii_lowercase),
+            secrets.choice(string.ascii_uppercase),
+            secrets.choice(string.digits),
+            secrets.choice("!@#$%^&*()-_=+[]{};:,.?/")
+        ]
+        restante = n - len(pool)
+        all_chars = string.ascii_letters + string.digits + "!@#$%^&*()-_=+[]{};:,.?/"
+        pool.extend(secrets.choice(all_chars) for _ in range(max(0, restante)))
+        secrets.SystemRandom().shuffle(pool)
+        return "".join(pool)
+
     with st.expander("Alterar password", expanded=False):
-        with st.form("form_change_password"):
-            current_pw = st.text_input("Password atual", type="password", key="pw_atual")
-            new_pw = st.text_input("Nova password", type="password", key="pw_nova")
-            confirm_pw = st.text_input("Confirmar nova password", type="password", key="pw_confirma")
-            submit_change = st.form_submit_button("Atualizar password")
+        # Aviso de segurança
+        st.caption("Atenção: esta ação não pede a password atual. Use com cuidado.")
+
+        show = st.checkbox("Mostrar passwords", value=False, key="pw_show_toggle_no_current")
+
+        gen_col1, gen_col2 = st.columns([1, 1])
+        with gen_col1:
+            if st.button("Gerar password segura", key="btn_gen_pw_no_current"):
+                generated = _gen_password()
+                st.session_state["pw_nova"] = generated
+                st.session_state["pw_confirma"] = generated
+                st.info("Password gerada e preenchida nos campos.")
+        with gen_col2:
+            pass
+
+        # Formulário sem pedir password atual
+        with st.form("form_change_password_no_current"):
+            t = "text" if show else "password"
+            new_pw = st.text_input("Nova password", type=t, key="pw_nova", placeholder="Mín. 8 caracteres")
+            confirm_pw = st.text_input("Confirmar nova password", type=t, key="pw_confirma", placeholder="Repita a nova password")
+
+            score, tips = _password_score(st.session_state.get("pw_nova", ""))
+            st.progress(score / 5.0 if score else 0.0)
+            st.caption(f"Força: {score}/5")
+            if tips and st.session_state.get("pw_nova", ""):
+                st.caption("Sugestões para melhorar:")
+                for tip in tips:
+                    st.caption(f"- {tip}")
+
+            matches = st.session_state.get("pw_nova", "") == st.session_state.get("pw_confirma", "")
+            long_enough = len(st.session_state.get("pw_nova", "")) >= 8
+            can_submit = matches and long_enough
+
+            submit_change = st.form_submit_button("Atualizar password", use_container_width=True, disabled=not can_submit)
 
             if submit_change:
-                # Imports locais para garantir disponibilidade
-                from auth import check_password, hash_password, log_action
-
-                # Validações básicas
-                if not current_pw or not new_pw or not confirm_pw:
-                    st.error("Preenche todos os campos.")
-                elif new_pw != confirm_pw:
-                    st.error("A confirmação não corresponde à nova password.")
-                elif len(new_pw) < 8:
-                    st.error("A nova password deve ter pelo menos 8 caracteres.")
-                else:
-                    try:
-                        # Buscar hash atual do utilizador
-                        cursor.execute("SELECT password_hash FROM users WHERE id = %s", (st.session_state.user["id"],))
-                        row = cursor.fetchone()
-                        if not row:
-                            st.error("Utilizador não encontrado.")
-                        else:
-                            current_hash = row[0]
-                            if not check_password(current_pw, current_hash):
-                                st.error("Password atual incorreta.")
-                            elif check_password(new_pw, current_hash):
-                                st.warning("A nova password é igual à atual.")
-                            else:
-                                new_hash = hash_password(new_pw)
-                                cursor.execute(
-                                    "UPDATE users SET password_hash = %s WHERE id = %s",
-                                    (new_hash, st.session_state.user["id"])
-                                )
-                                conn.commit()
-                                st.success("✅ Password atualizada com sucesso.")
-                                log_action(st.session_state.user["email"], "alteração de password", "utilizador")
-                    except Exception as e:
-                        st.error(f"Erro ao atualizar password: {e}")
+                from auth import hash_password, log_action
+                try:
+                    new_hash = hash_password(st.session_state["pw_nova"])
+                    cursor.execute(
+                        "UPDATE users SET password_hash = %s WHERE id = %s",
+                        (new_hash, st.session_state.user["id"])
+                    )
+                    conn.commit()
+                    st.success("✅ Password atualizada com sucesso.")
+                    log_action(st.session_state.user["email"], "alteração de password (sem verificação)", "utilizador")
+                    # Limpar campos
+                    st.session_state["pw_nova"] = ""
+                    st.session_state["pw_confirma"] = ""
+                except Exception as e:
+                    st.error(f"Erro ao atualizar password:{e}")
 
 
 # ----------- Sidebar -----------
