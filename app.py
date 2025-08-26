@@ -812,7 +812,7 @@ if menu == "Scraper" and role_name in ["admin", "account"]:
 elif menu == "Clientes":
     st.markdown("### 📁 Gestão de Clientes")
 
-    role =st.session_state.user["role_name"]
+    role = st.session_state.user["role_name"]
     email = st.session_state.user["email"]
 
     clientes = get_clientes(email=email, role=role)
@@ -828,18 +828,18 @@ elif menu == "Clientes":
         with st.expander("➕ Adicionar Nova Empresa", expanded=True):
             nome_empresa = st.text_input("Nome da Empresa", key="new_nome")
             perfil = st.text_input("Perfil", key="new_perfil")
-            tier = st.selectbox("Tier", [1, 2, 3, 4], key="new_tier")
+            # Removido: seleção de Tier para clientes
             email_cliente = st.text_input("Email associado ao cliente", key="new_email_cliente")
             logo_file = st.file_uploader("Logo", type=["png", "jpg", "jpeg"], key="new_logo")
 
             if st.button("💾 Salvar Empresa", use_container_width=True):
                 if nome_empresa and perfil and email_cliente:
                     logo_bytes = logo_file.read() if logo_file else None
-                    tier_value = int(tier)
+                    # Inserir sem a coluna 'tier' -> usa o DEFAULT da BD
                     cursor.execute("""
-                        INSERT INTO clientes (nome, perfil, tier, keywords, logo, email)
-                        VALUES (%s, %s, %s, %s, %s, %s)
-                    """, (nome_empresa, perfil, tier_value, "", logo_bytes, email_cliente))
+                        INSERT INTO clientes (nome, perfil, keywords, logo, email)
+                        VALUES (%s, %s, %s, %s, %s)
+                    """, (nome_empresa, perfil, "", logo_bytes, email_cliente))
                     conn.commit()
                     st.success("✅ Empresa adicionada com sucesso!")
                     log_action(email, "criação de cliente", f"empresa: {nome_empresa}")
@@ -861,6 +861,7 @@ elif menu == "Clientes":
     cliente = next((c for c in clientes if c[1] == cliente_nome), None)
 
     if cliente:
+        # Mantemos o fetch com 'tier' mas não o mostramos nem editamos
         cliente_id, nome, perfil, tier, keywords, logo_blob, email_assoc = cliente
 
         st.markdown("---")
@@ -872,7 +873,7 @@ elif menu == "Clientes":
         with col_info:
             st.markdown(f"###  **{nome}**")
             st.markdown(f"**Perfil:** {perfil}")
-            st.markdown(f"**Tier:** {tier}")
+            # Removido: linha de Tier do cliente
             st.markdown(f"**Email:** [{email_assoc}](mailto:{email_assoc})")
             st.markdown(f"**Keywords:** {keywords if keywords else '—'}")
 
@@ -880,18 +881,14 @@ elif menu == "Clientes":
             with st.expander("✏️ Editar Cliente"):
                 novo_nome = st.text_input("Nome", nome, key="novo_nome")
                 novo_perfil = st.text_input("Perfil", perfil, key="novo_perfil")
-                novo_tier = st.selectbox(
-                    "Tier do cliente",
-                    options=[1, 2, 3, 4],
-                    index=[1, 2, 3, 4].index(tier) if tier in [1, 2, 3, 4] else 4,
-                    key="novo_tier"
-                )
+                # Removido: edição de Tier do cliente
                 novas_keywords = st.text_input("Keywords", keywords or "", key="novas_keywords")
 
                 if st.button("💾 Guardar Alterações", key="update_cliente_btn"):
+                    # Atualizar sem tocar na coluna 'tier'
                     cursor.execute("""
-                        UPDATE clientes SET nome=%s, perfil=%s, tier=%s, keywords=%s WHERE id=%s
-                    """, (novo_nome, novo_perfil, novo_tier, novas_keywords, cliente_id))
+                        UPDATE clientes SET nome=%s, perfil=%s, keywords=%s WHERE id=%s
+                    """, (novo_nome, novo_perfil, novas_keywords, cliente_id))
                     conn.commit()
                     st.success("✅ Cliente atualizado!")
                     log_action(email, "edição de cliente", f"cliente: {novo_nome}")
@@ -920,7 +917,6 @@ elif menu == "Clientes":
                     if st.button("❌ Cancelar", key="btn_cancel_delete"):
                         st.session_state["confirm_delete_cliente"] = False
                         st.rerun()
-
 
         if "edit_media_active" not in st.session_state:
             st.session_state["edit_media_active"] = False
@@ -990,74 +986,7 @@ elif menu == "Clientes":
                 with col_cancel:
                     if st.button("❌ Cancelar edição", key=f"cancel_{m_id}"):
                         st.session_state["edit_media_active"] = False
-
                         st.rerun()
-
-
-
-# ----------- Página Admin DB -----------
-elif menu == "Admin DB" and st.session_state.user["is_admin"]:
-    st.title("📂 Acesso Base de Dados")
-
-    # Diagnóstico: ver tabelas disponíveis (MySQL)
-    cursor.execute("SHOW TABLES;")
-    tabelas = cursor.fetchall()
-    tabelas_nomes = [t[0] for t in tabelas]
-    if not tabelas_nomes:
-        st.warning("🚫 Nenhuma tabela encontrada na base de dados.")
-        st.stop()
-
-    selected_table = st.selectbox("Selecionar Tabela", tabelas_nomes, key="admin_select_table")
-
-    try:
-        query = f"SELECT * FROM {selected_table}"
-        cursor.execute(query)
-        rows = cursor.fetchall()
-        columns = [desc[0] for desc in cursor.description]
-
-        if rows:
-            df = pd.DataFrame(rows, columns=columns)
-            st.dataframe(df)
-        else:
-            st.info("📭 A tabela está vazia.")
-    except Exception as e:
-        st.error(f"❌ Erro ao aceder à tabela '{selected_table}': {e}")
-
-
-
-# ----------- Página Gestão Utilizadores -----------
-if menu == "Gestão Utilizadores" and st.session_state.user["role_name"] == "admin":
-    st.title("Gestão de Utilizadores")
-    users = get_all_users()
-    roles = get_roles()
-    role_dict = {r[1]: r[0] for r in roles}
-
-    for user in users:
-        uid, uname, uemail, urole = user
-        col1, col2 = st.columns([3, 2])
-        with col1:
-            st.text(f"{uname} ({uemail})")
-
-        is_env_admin = is_admin_email(uemail)
-
-        with col2:
-            # Desativar select para admins definidos no .env
-            new_role = st.selectbox(
-                "",
-                options=list(role_dict.keys()),
-                index=list(role_dict).index(urole),
-                key=f"role_{uid}",
-                disabled=is_env_admin
-            )
-
-            if is_env_admin:
-                st.caption("Este utilizador é admin fixo não pode ser alterado")
-            else:
-                if st.button("Atualizar", key=f"update_{uid}"):
-                    update_user_role(uid, role_dict[new_role])
-                    st.success("Função atualizada!")
-                    log_action(st.session_state.user["email"], "alteração função", f"utilizador ID: {uid}")
-                    st.rerun()
 
 
 
