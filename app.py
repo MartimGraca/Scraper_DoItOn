@@ -422,7 +422,7 @@ if menu == "Scraper" and role_name in ["admin", "account"]:
 
     # ---------- GOOGLE NEWS ----------
         elif modo_scraper == "Google Notícias":
-             st.subheader("🔍 Pesquisa no Google Notícias")
+         st.subheader("🔍 Pesquisa no Google Notícias")
 
     keyword = st.text_input("Insira palavras-chave separadas por vírgula:", value=keywords_atuais)
     filtro_tempo = st.selectbox(
@@ -842,7 +842,7 @@ if menu == "Gestão Utilizadores" and st.session_state.user["role_name"] == "adm
             )
 
             if is_env_admin:
-                st.caption("Este utilizador é admin fixo via .env e não pode ser alterado.")
+                st.caption("Este utilizador é admin fixo não pode ser alterado")
             else:
                 if st.button("Atualizar", key=f"update_{uid}"):
                     update_user_role(uid, role_dict[new_role])
