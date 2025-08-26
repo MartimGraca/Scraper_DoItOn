@@ -94,3 +94,4 @@ setuptools==65.5.1
 requests
 beautifulsoup4
 feedparser
+XlsxWriter
