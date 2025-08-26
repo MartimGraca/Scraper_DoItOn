@@ -1,248 +1,163 @@
+import re
 import os
-import time
 import logging
-import unicodedata
-from typing import List, Dict, Optional
-from urllib.parse import urljoin, urlparse, urlencode
+from typing import List, Dict, Any, Optional
+from urllib.parse import urlparse, urljoin
 
 import requests
 from bs4 import BeautifulSoup
-import feedparser
 
-# Configuração de logs
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(level=getattr(logging, LOG_LEVEL, logging.INFO),
                     format="%(asctime)s - %(levelname)s - %(message)s")
-logger = logging.getLogger("media_db_scraper")
+log = logging.getLogger("mediaDB_scraper")
 
-# Timeouts e limites
-REQ_TIMEOUT = float(os.getenv("SCRAPER_REQ_TIMEOUT", "8.0"))
-MAX_ITEMS_PER_SITE = int(os.getenv("SCRAPER_MAX_ITEMS_PER_SITE", "8"))
-SLEEP_BETWEEN_SITES = float(os.getenv("SCRAPER_SLEEP_BETWEEN_SITES", "0.2"))
+DEFAULT_UA = os.getenv("SCRAPER_UA", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0 Safari/537.36")
+REQ_TIMEOUT = float(os.getenv("SCRAPER_REQ_TIMEOUT", "6.0"))
 
-# Caminhos de feed comuns
-COMMON_FEED_PATHS = [
-    "/feed", "/rss", "/rss.xml", "/atom.xml", "/feed.xml",
-    "/feeds/posts/default?alt=rss"  # Blogger
-]
+def healthcheck() -> str:
+    return "ok"
 
-# Rotas de pesquisa comuns
-SEARCH_PATTERNS = [
-    # WordPress
-    lambda base, kw: f"{base}/?{urlencode({'s': kw})}",
-    # Genéricas
-    lambda base, kw: f"{base}/search?{urlencode({'q': kw})}",
-    lambda base, kw: f"{base}/pesquisa?{urlencode({'q': kw})}",
-    lambda base, kw: f"{base}/procurar?{urlencode({'q': kw})}",
-    lambda base, kw: f"{base}/busca?{urlencode({'q': kw})}",
-]
-
-HEADERS = {
-    "User-Agent": os.getenv("SCRAPER_UA", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0 Safari/537.36")
-}
-
-def _norm(s: str) -> str:
-    s = s or ""
-    s = unicodedata.normalize('NFKD', s).encode('ascii', 'ignore').decode('ascii')
-    return s.lower().strip()
-
-def _contains(text: str, keyword: str) -> bool:
-    return _norm(keyword) in _norm(text)
-
-def get_site_root(url: str) -> str:
-    """Garante root sem path e sem trailing slash."""
-    if not url:
-        return ""
-    if not url.startswith("http"):
-        url = "https://" + url.lstrip("/")
-    p = urlparse(url)
-    root = f"{p.scheme}://{p.netloc}"
-    return root.rstrip("/")
-
-def safe_get(url: str) -> Optional[requests.Response]:
-    try:
-        r = requests.get(url, headers=HEADERS, timeout=REQ_TIMEOUT)
-        if 200 <= r.status_code < 300:
-            return r
-        return None
-    except Exception as e:
-        logger.debug(f"GET falhou {url}: {e}")
-        return None
-
-def discover_feeds(base_url: str) -> List[str]:
-    feeds = []
-    root = get_site_root(base_url)
-    if not root:
-        return feeds
-
-    # 1) Procurar <link rel="alternate" type="application/rss+xml">
-    resp = safe_get(root)
-    if resp and resp.text:
-        soup = BeautifulSoup(resp.text, "html.parser")
-        for link in soup.find_all("link", rel=lambda v: v and "alternate" in v):
-            t = (link.get("type") or "").lower()
-            if "rss" in t or "atom" in t or "xml" in t:
-                href = link.get("href")
-                if href:
-                    feeds.append(urljoin(root + "/", href))
-
-    # 2) Testar caminhos comuns
-    for path in COMMON_FEED_PATHS:
-        feed_url = root + path
-        if feed_url in feeds:
-            continue
-        r = safe_get(feed_url)
-        if r and ("<rss" in r.text or "<feed" in r.text or "<channel" in r.text):
-            feeds.append(feed_url)
-
-    # dedup simples
-    seen = set()
-    out = []
-    for f in feeds:
-        if f not in seen:
-            seen.add(f)
-            out.append(f)
-    logger.debug(f"Feeds para {root}: {out}")
-    return out
-
-def parse_feed(feed_url: str, max_items: int) -> List[Dict]:
-    d = feedparser.parse(feed_url)
-    items = []
-    for e in d.entries[:max_items * 2]:
-        title = (e.get("title") or "").strip()
-        link = (e.get("link") or "").strip()
-        published = (e.get("published") or e.get("updated") or "").strip()
-        summary = (e.get("summary") or "")
-        if not link:
-            continue
-        items.append({
-            "title": title,
-            "url": link,
-            "published": published,
-            "summary": BeautifulSoup(summary, "html.parser").get_text(" ").strip()
-        })
-    return items
-
-def search_site_pages(base_url: str, keyword: str, max_items: int) -> List[Dict]:
-    """Fallback de pesquisa via rotas comuns. Extrai anchors e filtra por keyword no texto."""
-    results: List[Dict] = []
-    root = get_site_root(base_url)
-    if not root:
-        return results
-    tried = set()
-    for builder in SEARCH_PATTERNS:
-        url = builder(root, keyword)
-        if url in tried:
-            continue
-        tried.add(url)
-        r = safe_get(url)
-        if not r or not r.text:
-            continue
-        soup = BeautifulSoup(r.text, "html.parser")
-        anchors = soup.find_all("a")
-        for a in anchors:
-            href = a.get("href")
-            text = a.get_text(" ").strip()
-            if not href or not text or len(text) < 12:
-                continue
-            full = urljoin(root + "/", href)
-            # manter no mesmo domínio
-            if urlparse(full).netloc != urlparse(root).netloc:
-                continue
-            if _contains(text, keyword):
-                results.append({"title": text, "url": full, "published": "", "summary": ""})
-        if results:
-            break
-    # dedup e limitar
-    dedup: Dict[str, Dict] = {}
-    for it in results:
-        dedup[it["url"]] = it
-    out = list(dedup.values())[:max_items]
-    return out
-
-def scrape_media_site(media: Dict, keyword: str, max_items_per_site: int = None) -> List[Dict]:
-    """
-    media: {"id": int, "nome": str, "url": str}
-    Retorna lista: {"title","url","published","source","media_id","media_nome"}
-    """
-    if max_items_per_site is None:
-        max_items_per_site = MAX_ITEMS_PER_SITE
-
-    base_url = media.get("url") or ""
-    nome = media.get("nome") or ""
-    if not base_url:
+def parse_keywords(keywords_raw: str) -> List[str]:
+    if not keywords_raw:
         return []
+    # separa por vírgula/linhas
+    parts = [p.strip() for p in re.split(r"[,\n]+", keywords_raw) if p.strip()]
+    return parts
 
-    # 1) Tenta feeds
+def _like_clause_for_keywords(keywords: List[str], fields: List[str], match_all: bool, params_out: List[Any]) -> str:
+    if not keywords or not fields:
+        return ""
+    subclauses: List[str] = []
+    for kw in keywords:
+        ors: List[str] = []
+        for f in fields:
+            ors.append(f"{f} LIKE %s")
+            params_out.append(f"%{kw}%")
+        subclauses.append("(" + " OR ".join(ors) + ")")
+    return (" AND ".join(subclauses)) if match_all else (" OR ".join(subclauses))
+
+def search_media(
+    cursor,
+    keywords_raw: str,
+    fields: List[str],
+    match_all: bool,
+    tipologia_filter: Optional[str],
+    segmento_filter: Optional[str],
+    tier_filter: Optional[int],
+    limit_results: int = 200,
+) -> List[Dict[str, Any]]:
+    """
+    Pesquisa diretamente na tabela 'media' com LIKEs e filtros.
+    fields subset de ["nome","url","tipologia","segmento"]
+    match_all: True => todas as palavras, False => qualquer palavra
+    """
+    keywords = parse_keywords(keywords_raw)
+    campos = fields or ["nome", "url"]
+
+    where_parts: List[str] = []
+    params: List[Any] = []
+
+    like_clause = _like_clause_for_keywords(keywords, campos, match_all, params)
+    if like_clause:
+        where_parts.append(f"({like_clause})")
+
+    if tipologia_filter and tipologia_filter != "Qualquer":
+        where_parts.append("tipologia = %s")
+        params.append(tipologia_filter)
+    if segmento_filter and segmento_filter != "Qualquer":
+        where_parts.append("segmento = %s")
+        params.append(segmento_filter)
+    if tier_filter not in (None, "Qualquer", ""):
+        try:
+            params.append(int(tier_filter))
+            where_parts.append("tier = %s")
+        except Exception:
+            pass
+
+    sql = """
+        SELECT id, nome, url, cliente_id, tipologia, segmento, tier
+        FROM media
+    """
+    if where_parts:
+        sql += " WHERE " + " AND ".join(where_parts)
+    sql += " ORDER BY id DESC LIMIT %s"
+    params.append(int(limit_results))
+
+    cursor.execute(sql, tuple(params))
+    rows = cursor.fetchall()
+
+    out: List[Dict[str, Any]] = []
+    for r in rows:
+        out.append({
+            "id": r[0],
+            "nome": r[1],
+            "url": r[2],
+            "cliente_id": r[3],
+            "tipologia": r[4],
+            "segmento": r[5],
+            "tier": r[6],
+        })
+    return out
+
+def _fetch_html(url: str, timeout: float, ua: str) -> Optional[str]:
+    if not url:
+        return None
+    headers = {"User-Agent": ua or DEFAULT_UA}
     try:
-        feeds = discover_feeds(base_url)
-    except Exception as e:
-        logger.debug(f"[{nome}] discover_feeds falhou: {e}")
-        feeds = []
+        resp = requests.get(url, headers=headers, timeout=timeout, allow_redirects=True)
+        if 200 <= resp.status_code < 300 and resp.text:
+            return resp.text
+    except Exception:
+        return None
+    return None
 
-    collected: List[Dict] = []
-    for f in feeds:
-        try:
-            items = parse_feed(f, max_items_per_site)
-            for it in items:
-                if _contains(f"{it['title']} {it['summary']}", keyword):
-                    collected.append({
-                        "title": it["title"],
-                        "url": it["url"],
-                        "published": it["published"],
-                        "source": "rss",
-                        "media_id": media.get("id"),
-                        "media_nome": nome
-                    })
-            if collected:
-                break
-        except Exception as e:
-            logger.debug(f"[{nome}] parse_feed falhou ({f}): {e}")
+def _guess_favicon(base_url: str, soup: BeautifulSoup) -> Optional[str]:
+    for rel in ["icon", "shortcut icon", "apple-touch-icon", "mask-icon"]:
+        link = soup.find("link", rel=lambda v: v and rel in v.lower())
+        if link and link.get("href"):
+            return urljoin(base_url, link["href"])
+    parsed = urlparse(base_url)
+    root = f"{parsed.scheme}://{parsed.netloc}"
+    return urljoin(root + "/", "/favicon.ico")
 
-    # 2) Fallback pesquisa
-    if not collected:
-        try:
-            items = search_site_pages(base_url, keyword, max_items_per_site)
-            for it in items:
-                collected.append({
-                    "title": it["title"],
-                    "url": it["url"],
-                    "published": it["published"],
-                    "source": "search",
-                    "media_id": media.get("id"),
-                    "media_nome": nome
-                })
-        except Exception as e:
-            logger.debug(f"[{nome}] search_site_pages falhou: {e}")
+def _get_og_image(base_url: str, soup: BeautifulSoup) -> Optional[str]:
+    og = soup.find("meta", property="og:image") or soup.find("meta", attrs={"name": "og:image"})
+    if og and og.get("content"):
+        return urljoin(base_url, og["content"])
+    tw = soup.find("meta", property="twitter:image") or soup.find("meta", attrs={"name": "twitter:image"})
+    if tw and tw.get("content"):
+        return urljoin(base_url, tw["content"])
+    img = soup.find("img", src=True)
+    if img:
+        return urljoin(base_url, img["src"])
+    return None
 
-    # dedup e limitar
-    dedup: Dict[str, Dict] = {}
-    for it in collected:
-        dedup[it["url"]] = it
-    final = list(dedup.values())[:max_items_per_site]
-    logger.info(f"[{nome}] resultados: {len(final)} (keyword='{keyword}')")
-    return final
+def enrich_previews(items: List[Dict[str, Any]], timeout: float = None, user_agent: str = None) -> List[Dict[str, Any]]:
+    """
+    Para cada item com 'url', tenta obter imagem OG e favicon para mostrar um card.
+    Não falha o fluxo se não conseguir (campos ficam None).
+    """
+    if timeout is None:
+        timeout = REQ_TIMEOUT
+    ua = user_agent or DEFAULT_UA
 
-def scrape_sites(media_list: List[Dict], keyword: str, max_items_per_site: int = None, sleep_between_sites: float = None) -> List[Dict]:
-    """Corre scraping em todos os sites da lista e agrega resultados."""
-    if max_items_per_site is None:
-        max_items_per_site = MAX_ITEMS_PER_SITE
-    if sleep_between_sites is None:
-        sleep_between_sites = SLEEP_BETWEEN_SITES
-
-    aggregated: List[Dict] = []
-    logger.info(f"A processar {len(media_list)} sites...")
-    for m in media_list:
-        try:
-            items = scrape_media_site(m, keyword, max_items_per_site)
-            aggregated.extend(items)
-        except Exception as e:
-            logger.debug(f"Erro no site '{m.get('nome') or m.get('url')}': {e}")
-        time.sleep(sleep_between_sites)
-    # dedup final
-    dedup: Dict[str, Dict] = {}
-    for it in aggregated:
-        dedup[it["url"]] = it
-    final = list(dedup.values())
-    logger.info(f"Total resultados agregados: {len(final)}")
-    return final
+    enriched: List[Dict[str, Any]] = []
+    for it in items:
+        url = it.get("url") or ""
+        og_image = None
+        favicon = None
+        if url:
+            html_text = _fetch_html(url, timeout, ua)
+            if html_text:
+                try:
+                    soup = BeautifulSoup(html_text, "html.parser")
+                    og_image = _get_og_image(url, soup)
+                    favicon = _guess_favicon(url, soup)
+                except Exception:
+                    pass
+        new = dict(it)
+        new["og_image"] = og_image
+        new["favicon"] = favicon
+        enriched.append(new)
+    return enriched

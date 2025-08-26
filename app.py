@@ -12,7 +12,8 @@ import nest_asyncio
 from dotenv import load_dotenv
 import bcrypt
 import mysql.connector
-
+# … outros imports …
+from mediaDB_scraper import search_media, enrich_previews, healthcheck  # novo import para o modo Minha Base de Media
 from scraper import executar_scraper
 from scraper import get_site_name
 import matplotlib.pyplot as plt
@@ -301,6 +302,7 @@ else:
 # ----------- Página Scraper -----------
 
 import nest_asyncio
+import asyncio
 nest_asyncio.apply()
 
 if menu == "Scraper" and role_name in ["admin", "account"]:
@@ -310,6 +312,7 @@ if menu == "Scraper" and role_name in ["admin", "account"]:
     st.session_state.setdefault("resultados_direto", [])
     st.session_state.setdefault("resultados_scraper", [])
     st.session_state.setdefault("mdb_resultados", [])
+    st.session_state.setdefault("mdb_busca", [])
 
     # Escolha do modo primeiro (assim podemos esconder "Empresa" no modo interno)
     modo_scraper = st.radio(
@@ -625,180 +628,181 @@ if menu == "Scraper" and role_name in ["admin", "account"]:
                                 clear_pending(state_base)
                                 st.rerun()
 
-    # ---------- MINHA BASE DE MEDIA ----------
+    # ---------- MINHA BASE DE MEDIA (pesquisa direta na BD, visual "scraper") ----------
     elif modo_scraper == "Minha Base de Media":
-        st.subheader("🧭 Scraper da Minha Base de Media")
-        st.caption("Pesquisa em TODOS os sites da tabela 'media' e permite guardar/atualizar na mesma tabela.")
-
-        # Import protegido (para mostrares erro caso o ficheiro não exista)
+        st.subheader("🗂️ Web Scraper da Minha BD (sem raspar sites)")
+        # Import do módulo de pesquisa/preview (ficheiro na raiz do repo)
         try:
-            from scrapers.mediaDB_scraper import scrape_sites
-            st.caption("(debug) Import do mediaDB_scraper OK")
+            from mediaDB_scraper import search_media, enrich_previews, healthcheck
+            st.caption(f"(debug) mediaDB_scraper import OK: {healthcheck()}")
         except Exception as e:
-            st.error(f"Não consegui importar scrapers/mediaDB_scraper.py: {e}")
-            st.info("Confirma: 1) nome do ficheiro; 2) existe scrapers/__init__.py vazio.")
+            st.error(f"Falha ao importar mediaDB_scraper.py: {e}")
             st.stop()
 
-        # Inputs base — aparecem sempre
-        kw_int = st.text_input("Palavra‑chave", key="mdb_kw")
+        # UI de pesquisa (sem Empresa)
+        keywords_raw = st.text_input("Palavras‑chave (separa por vírgulas)", key="mdb_kw")
+        match_mode = st.radio("Corresponder", ["Qualquer palavra", "Todas as palavras"], horizontal=True, key="mdb_match")
 
-        colA, colB = st.columns(2)
-        with colA:
-            limite_sites = st.number_input("Máx. sites a processar", min_value=1, max_value=500, value=50, step=1, key="mdb_limit_sites")
-        with colB:
-            max_por_site = st.number_input("Máx. resultados por site", min_value=1, max_value=10, value=3, step=1, key="mdb_max_site")
+        col_campos1, col_campos2, col_filtros = st.columns([1.2, 1.2, 1])
+        with col_campos1:
+            campo_nome = st.checkbox("Procurar em Nome", value=True, key="mdb_campo_nome")
+            campo_url = st.checkbox("Procurar em URL", value=True, key="mdb_campo_url")
+        with col_campos2:
+            campo_tipologia = st.checkbox("Procurar em Tipologia", value=False, key="mdb_campo_tipologia")
+            campo_segmento = st.checkbox("Procurar em Segmento", value=False, key="mdb_campo_segmento")
+        with col_filtros:
+            tipologia_filtro = st.selectbox("Filtrar Tipologia (opcional)", ["Qualquer", "Online", "TV", "Rádio", "Imprensa"], key="mdb_filtro_tipologia")
+            segmento_filtro = st.selectbox("Filtrar Segmento (opcional)", ["Qualquer", "Tecnologia", "Político", "Saúde", "Outro"], key="mdb_filtro_segmento")
+            tier_filtro = st.selectbox("Filtrar Tier (opcional)", ["Qualquer", 1, 2, 3, 4], key="mdb_filtro_tier")
 
-        colD, colE, colF = st.columns(3)
-        with colD:
-            default_tipologia = st.selectbox("Default Tipologia", ["Online", "TV", "Rádio", "Imprensa"], index=0, key="mdb_def_tipo")
-        with colE:
-            default_segmento = st.selectbox("Default Segmento", ["Tecnologia", "Político", "Saúde", "Outro"], index=0, key="mdb_def_seg")
-        with colF:
-            default_tier = st.selectbox("Default Tier", [1, 2, 3, 4], index=3, key="mdb_def_tier")
+        limite_resultados = st.number_input("Máx. resultados", min_value=1, max_value=1000, value=200, step=10, key="mdb_limit")
 
-        # Lê TODAS as medias
-        def fetch_all_medias(limit_sites: int | None):
+        # Botão de pesquisa
+        if st.button("🔎 Pesquisar na BD", key="mdb_btn_search"):
+            campos = []
+            if campo_nome: campos.append("nome")
+            if campo_url: campos.append("url")
+            if campo_tipologia: campos.append("tipologia")
+            if campo_segmento: campos.append("segmento")
+            if not campos:
+                campos = ["nome", "url"]
+
             try:
-                cursor.execute("SELECT id, nome, url FROM media WHERE url IS NOT NULL AND url <> '' ORDER BY id DESC")
-                rows = cursor.fetchall()
+                rows = search_media(
+                    cursor=cursor,  # usa o cursor já aberto na app
+                    keywords_raw=keywords_raw or "",
+                    fields=campos,
+                    match_all=(match_mode == "Todas as palavras"),
+                    tipologia_filter=tipologia_filtro,
+                    segmento_filter=segmento_filtro,
+                    tier_filter=(None if tier_filtro == "Qualquer" else int(tier_filtro)),
+                    limit_results=int(limite_resultados),
+                )
             except Exception as e:
-                st.error(f"Erro ao ler medias: {e}")
-                return []
-            medias = [{"id": r[0], "nome": r[1], "url": r[2]} for r in rows if r and r[2]]
-            if limit_sites:
-                medias = medias[:limit_sites]
-            return medias
+                st.exception(e)
+                rows = []
 
-        if st.button("🔎 Pesquisar na minha Base de Media", key="mdb_run"):
-            if not kw_int.strip():
-                st.warning("Indica uma palavra‑chave.")
-            else:
-                with st.spinner("A pesquisar nos sites de media..."):
-                    try:
-                        medias_lista = fetch_all_medias(limite_sites)
-                        resultados = scrape_sites(medias_lista, kw_int.strip(), max_items_per_site=max_por_site)
-                    except Exception as e:
-                        st.exception(e)
-                        resultados = []
-                st.session_state["mdb_resultados"] = resultados
-                st.success(f"Encontrados {len(resultados)} resultados.")
+            # Enriquecer com favicon/og image para parecer “scraped”
+            try:
+                rows = enrich_previews(rows)
+            except Exception:
+                pass
 
-        # Render e guardar (sem campo Empresa aqui)
-        for i, r in enumerate(st.session_state.get("mdb_resultados", [])):
-            titulo = r.get("title") or "Sem título"
-            link = r.get("url") or ""
-            site_name = r.get("media_nome") or "N/D"
-            fonte = (r.get("source") or "rss").upper()
+            st.session_state["mdb_busca"] = rows
+            st.success(f"Encontrados {len(rows)} registos.")
 
-            with st.expander(f"{i+1}. {titulo}"):
-                st.write(f"Media: {site_name}  •  Fonte: {fonte}")
-                st.markdown(f"[🌐 Abrir Link]({link})", unsafe_allow_html=True)
+        # Render dos resultados com edição e confirmação
+        for i, row in enumerate(st.session_state.get("mdb_busca", [])):
+            rid = row["id"]
+            titulo_card = row["nome"] or f"ID {rid}"
+            favicon = row.get("favicon")
+            og_image = row.get("og_image")
 
-                nome_sugerido = extrair_nome_midia(site_name, titulo)
-                nome = st.text_input("📝 Nome da Media", nome_sugerido, key=f"mdb_nome_{i}")
-                tipologia = st.selectbox("📺 Tipologia", ["Online", "TV", "Rádio", "Imprensa"], index=["Online","TV","Rádio","Imprensa"].index(default_tipologia), key=f"mdb_tipo_{i}")
-                segmento = st.selectbox("🏷️ Segmento", ["Tecnologia", "Político", "Saúde", "Outro"], index=["Tecnologia","Político","Saúde","Outro"].index(default_segmento), key=f"mdb_seg_{i}")
+            with st.expander(f"{i+1}. {titulo_card} (ID {rid})"):
+                cols = st.columns([0.1, 0.8, 0.1])
+                with cols[0]:
+                    if favicon:
+                        st.image(favicon, width=24)
+                with cols[1]:
+                    st.markdown(f"[{row['url'] or 'sem URL'}]({row['url'] or '#'})", unsafe_allow_html=True)
+                    st.caption(f"Tipologia: {row['tipologia'] or '—'} • Segmento: {row['segmento'] or '—'} • Tier: {row['tier'] or '—'}")
+                with cols[2]:
+                    if og_image:
+                        st.image(og_image, width=48)
 
-                tier_automatico = obter_tier_por_nome(nome)
-                tier_default = tier_automatico if tier_automatico else default_tier
-                tier = st.selectbox("⭐ Tier", [1, 2, 3, 4], index=[1,2,3,4].index(tier_default), key=f"mdb_tier_{i}")
+                # Inputs de edição
+                nome = st.text_input("📝 Nome da Media", value=row["nome"] or "", key=f"mdb_edit_nome_{rid}")
+                url = st.text_input("🌐 URL", value=row["url"] or "", key=f"mdb_edit_url_{rid}")
+                tipologia = st.selectbox(
+                    "📺 Tipologia", ["Online", "TV", "Rádio", "Imprensa"],
+                    index=(["Online","TV","Rádio","Imprensa"].index(row["tipologia"]) if row["tipologia"] in ["Online","TV","Rádio","Imprensa"] else 0),
+                    key=f"mdb_edit_tip_{rid}"
+                )
+                segmento = st.selectbox(
+                    "🏷️ Segmento", ["Tecnologia", "Político", "Saúde", "Outro"],
+                    index=(["Tecnologia","Político","Saúde","Outro"].index(row["segmento"]) if row["segmento"] in ["Tecnologia","Político","Saúde","Outro"] else 0),
+                    key=f"mdb_edit_seg_{rid}"
+                )
+                tier = st.selectbox(
+                    "⭐ Tier", [1, 2, 3, 4],
+                    index=([1,2,3,4].index(int(row["tier"])) if row["tier"] in [1,2,3,4] else 3),
+                    key=f"mdb_edit_tier_{rid}"
+                )
 
-                state_base = f"mdb_{i}"
+                state_base = f"mdb_edit_{rid}"
 
-                if st.button("💾 Guardar", key=f"mdb_guardar_{i}"):
-                    # Como este modo ignora 'Empresa', vamos guardar sem cliente_id.
-                    # Se a tua coluna media.cliente_id for NOT NULL, altera para usar um cliente default ou pergunta no topo.
-                    try:
-                        existente = media_existe(nome, None)  # adapta a tua função para aceitar None; se não der, remove o filtro por cliente na query
-                    except Exception:
-                        existente = None
-
-                    if not existente:
-                        ex_url = media_por_url(link)
-                        if ex_url and ex_url.get("cliente_id") not in (None, 0):
-                            # Se a tua media_por_url exige cliente_id, podes ignorar esta verificação aqui
-                            pass
-
-                    if existente:
-                        st.session_state[f"{state_base}_pending_nome"] = nome
-                        st.session_state[f"{state_base}_pending_tipologia"] = tipologia
-                        st.session_state[f"{state_base}_pending_segmento"] = segmento
-                        st.session_state[f"{state_base}_pending_tier"] = tier
-                        st.session_state[f"{state_base}_pending_link"] = link
-                        st.session_state[f"{state_base}_pending_id"] = existente[0]
-
-                        st.session_state[f"{state_base}_existente_nome"] = existente[1]
-                        st.session_state[f"{state_base}_existente_url"] = existente[2]
-                        st.session_state[f"{state_base}_existente_tipologia"] = existente[3]
-                        st.session_state[f"{state_base}_existente_segmento"] = existente[4]
-                        st.session_state[f"{state_base}_existente_tier"] = existente[5]
-
-                        st.session_state[f"{state_base}_show_confirm"] = True
-                        st.rerun()
-                    else:
-                        # Inserção sem cliente_id (ajusta se a tua tabela exigir)
-                        insert_media(nome, link, None, tipologia, segmento, tier)
-                        st.success("Guardado com sucesso!")
-                        st.rerun()
+                if st.button("💾 Guardar alterações", key=f"mdb_save_{rid}"):
+                    st.session_state[f"{state_base}_pending"] = {
+                        "id": rid,
+                        "nome": nome,
+                        "url": url,
+                        "tipologia": tipologia,
+                        "segmento": segmento,
+                        "tier": int(tier),
+                        "cliente_id": row["cliente_id"],
+                    }
+                    st.session_state[f"{state_base}_existente"] = row
+                    st.session_state[f"{state_base}_show_confirm"] = True
+                    st.rerun()
 
                 if st.session_state.get(f"{state_base}_show_confirm", False):
-                    pend_id = st.session_state.get(f"{state_base}_pending_id")
-                    pend_nome = st.session_state.get(f"{state_base}_pending_nome")
-                    pend_url = st.session_state.get(f"{state_base}_pending_link")
-                    pend_tipologia = st.session_state.get(f"{state_base}_pending_tipologia")
-                    pend_segmento = st.session_state.get(f"{state_base}_pending_segmento")
-                    pend_tier = st.session_state.get(f"{state_base}_pending_tier")
+                    pend = st.session_state.get(f"{state_base}_pending")
+                    ex = st.session_state.get(f"{state_base}_existente")
 
-                    exist_nome = st.session_state.get(f"{state_base}_existente_nome")
-                    exist_url = st.session_state.get(f"{state_base}_existente_url")
-                    exist_tipologia = st.session_state.get(f"{state_base}_existente_tipologia")
-                    exist_segmento = st.session_state.get(f"{state_base}_existente_segmento")
-                    exist_tier = st.session_state.get(f"{state_base}_existente_tier")
+                    def clear_state():
+                        for k in [f"{state_base}_pending", f"{state_base}_existente", f"{state_base}_show_confirm"]:
+                            st.session_state.pop(k, None)
 
-                    def clear_pending(prefix: str):
-                        for suf in [
-                            "pending_nome", "pending_link", "pending_tipologia",
-                            "pending_segmento", "pending_tier", "pending_id",
-                            "existente_nome", "existente_url", "existente_tipologia",
-                            "existente_segmento", "existente_tier", "show_confirm"
-                        ]:
-                            st.session_state.pop(f"{prefix}_{suf}", None)
-
-                    st.warning("⚠️ Já existe uma media com este Nome/URL.")
+                    st.warning("⚠️ Confirmar substituição deste registo:")
                     col1, col2 = st.columns(2)
                     with col1:
-                        st.markdown("#### 📄 Media Existente")
-                        st.write(f"**Nome:** {exist_nome}")
-                        st.write(f"**URL:** {exist_url}")
-                        st.write(f"**Tipologia:** {exist_tipologia}")
-                        st.write(f"**Segmento:** {exist_segmento}")
-                        st.write(f"**Tier:** {exist_tier}")
+                        st.markdown("#### 📄 Atual")
+                        st.write(f"Nome: {ex['nome']}")
+                        st.write(f"URL: {ex['url']}")
+                        st.write(f"Tipologia: {ex['tipologia']}")
+                        st.write(f"Segmento: {ex['segmento']}")
+                        st.write(f"Tier: {ex['tier']}")
                     with col2:
-                        st.markdown("#### ✍️ Nova Media")
-                        st.write(f"**Nome:** {pend_nome}")
-                        st.write(f"**URL:** {pend_url}")
-                        st.write(f"**Tipologia:** {pend_tipologia}")
-                        st.write(f"**Segmento:** {pend_segmento}")
-                        st.write(f"**Tier:** {pend_tier}")
+                        st.markdown("#### ✍️ Novo")
+                        st.write(f"Nome: {pend['nome']}")
+                        st.write(f"URL: {pend['url']}")
+                        st.write(f"Tipologia: {pend['tipologia']}")
+                        st.write(f"Segmento: {pend['segmento']}")
+                        st.write(f"Tier: {pend['tier']}")
 
                     c1, c2 = st.columns(2)
                     with c1:
-                        if st.button("✅ Confirmar e Substituir", key=f"mdb_confirma_{i}"):
+                        if st.button("✅ Confirmar e Substituir", key=f"mdb_confirm_{rid}"):
+                            # Anti-duplicação básica
+                            try:
+                                dup = media_existe(pend["nome"], pend["cliente_id"])
+                            except Exception:
+                                dup = None
+                            if dup and dup[0] != ex["id"]:
+                                st.warning("Já existe uma media com este nome para este cliente.")
+                                st.stop()
+
+                            if pend["url"] and pend["url"] != ex["url"]:
+                                ex_url = media_por_url(pend["url"])
+                                if ex_url and ex_url["id"] != ex["id"]:
+                                    st.warning("Esta URL já está associada a outra media.")
+                                    st.stop()
+
                             update_media(
-                                media_id=pend_id,
-                                nome=pend_nome,
-                                url=pend_url,
-                                tipologia=pend_tipologia,
-                                segmento=pend_segmento,
-                                tier=pend_tier
+                                media_id=ex["id"],
+                                nome=pend["nome"],
+                                url=pend["url"],
+                                tipologia=pend["tipologia"],
+                                segmento=pend["segmento"],
+                                tier=pend["tier"]
                             )
                             st.success("Media atualizada com sucesso!")
-                            clear_pending(state_base)
+                            clear_state()
                             st.rerun()
                     with c2:
-                        if st.button("❌ Cancelar", key=f"mdb_cancelar_{i}"):
+                        if st.button("❌ Cancelar", key=f"mdb_cancel_{rid}"):
                             st.info("Operação cancelada.")
-                            clear_pending(state_base)
+                            clear_state()
                             st.rerun()
 # ----------- Página Dashboard (Placeholder) -----------
                 elif menu == "Dashboard":
