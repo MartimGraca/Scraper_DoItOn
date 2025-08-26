@@ -818,8 +818,8 @@ elif modo_scraper == "Minha Base de Media":
 
 
 # ----------- Página Dashboard (Placeholder) -----------
-    elif menu == "Dashboard":
-     st.title("\U0001F4CA Dashboard de Clientes")
+            elif menu == "Dashboard":
+                   st.title("\U0001F4CA Dashboard de Clientes")
 
 
 
