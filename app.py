@@ -401,10 +401,14 @@ if menu == "Scraper" and role_name in ["admin", "account"]:
                             st.rerun()
 
     # ---------- GOOGLE NEWS ----------
-    elif modo_scraper == "Google Notícias":
-     st.subheader("🔍 Pesquisa no Google Notícias")
+elif modo_scraper == "Google Notícias":
+    st.subheader("🔍 Pesquisa no Google Notícias")
+
     keyword = st.text_input("Insira palavras-chave separadas por vírgula:", value=keywords_atuais)
-    filtro_tempo = st.selectbox("Filtrar por período de tempo:", ["Na última hora", "Últimas 24 horas", "Última semana", "Último mês", "Último ano"])
+    filtro_tempo = st.selectbox(
+        "Filtrar por período de tempo:",
+        ["Na última hora", "Últimas 24 horas", "Última semana", "Último mês", "Último ano"]
+    )
 
     if st.button("🔎 Pesquisar"):
         if not cliente_id:
@@ -453,72 +457,115 @@ if menu == "Scraper" and role_name in ["admin", "account"]:
                 segmento = st.selectbox("🏷️ Segmento", ["Tecnologia", "Político", "Saúde", "Outro"], key=f"{kw}_seg_{i}")
                 tier_automatico = obter_tier_por_nome(nome)
                 tier_default = tier_automatico if tier_automatico else 4
-
                 tier = st.selectbox("⭐ Tier", [1, 2, 3, 4], index=tier_default - 1, key=f"dir_tier_{i}")
 
+                # Base de estado única por keyword e índice (evita colisões entre resultados)
+                state_base = f"gn_{kw}_{i}"
+
+                # Botão Guardar: apenas prepara estado quando já existe; insere direto quando não existe
                 if st.button("💾 Guardar", key=f"dir_guardar_{i}"):
-                        existente = media_existe(nome, cliente_id)  # (id, nome, url, tipologia, segmento, tier)
+                    existente = media_existe(nome, cliente_id)  # (id, nome, url, tipologia, segmento, tier) ou None
 
-                        # Também verificar por URL antes de tentar inserir
-                        if not existente:
-                            ex_url = media_por_url(link)
-                            if ex_url:
-                                if ex_url["cliente_id"] == cliente_id:
-                                    existente = (
-                                        ex_url["id"], ex_url["nome"], ex_url["url"],
-                                        ex_url["tipologia"], ex_url["segmento"], ex_url["tier"]
-                                    )
-                                else:
-                                    dono = next((c[1] for c in clientes if c[0] == ex_url["cliente_id"]), "Outro cliente")
-                                    st.warning(f"⚠️ Esta URL já está associada à empresa: {dono}. Não é possível reutilizar.")
-                                    st.stop()
-
-                        # Guarda valores no session_state para o confirmar
-                        st.session_state[f"dir_pending_nome_{i}"] = nome
-                        st.session_state[f"dir_pending_tipologia_{i}"] = tipologia
-                        st.session_state[f"dir_pending_segmento_{i}"] = segmento
-                        st.session_state[f"dir_pending_tier_{i}"] = tier
-                        st.session_state[f"dir_pending_link_{i}"] = link
-                        st.session_state[f"dir_pending_id_{i}"] = existente[0] if existente else None
-
-                        if existente:
-                            st.warning("⚠️ Já existe uma media com este nome/URL para esta empresa.")
-                            col1, col2 = st.columns(2)
-
-                            with col1:
-                                st.markdown("#### 📄 Media Existente")
-                                st.write(f"**Nome:** {existente[1]}")
-                                st.write(f"**URL:** {existente[2]}")
-                                st.write(f"**Tipologia:** {existente[3]}")
-                                st.write(f"**Segmento:** {existente[4]}")
-                                st.write(f"**Tier:** {existente[5]}")
-
-                            with col2:
-                                st.markdown("#### ✍️ Nova Media")
-                                st.write(f"**Nome:** {nome}")
-                                st.write(f"**URL:** {link}")
-                                st.write(f"**Tipologia:** {tipologia}")
-                                st.write(f"**Segmento:** {segmento}")
-                                st.write(f"**Tier:** {tier}")
-
-                            if st.button("✅ Confirmar e Substituir", key=f"dir_confirma_{i}"):
-                                update_media(
-                                    media_id=st.session_state[f"dir_pending_id_{i}"],
-                                    nome=st.session_state[f"dir_pending_nome_{i}"],
-                                    url=st.session_state[f"dir_pending_link_{i}"],
-                                    tipologia=st.session_state[f"dir_pending_tipologia_{i}"],
-                                    segmento=st.session_state[f"dir_pending_segmento_{i}"],
-                                    tier=st.session_state[f"dir_pending_tier_{i}"]
+                    # Também verificar por URL antes de tentar inserir
+                    if not existente:
+                        ex_url = media_por_url(link)  # dict com cliente_id, id, nome, url, tipologia, segmento, tier
+                        if ex_url:
+                            if ex_url["cliente_id"] == cliente_id:
+                                existente = (
+                                    ex_url["id"], ex_url["nome"], ex_url["url"],
+                                    ex_url["tipologia"], ex_url["segmento"], ex_url["tier"]
                                 )
-                                st.success("Media atualizada com sucesso!")
-                                st.rerun()
-                            elif st.button("❌ Cancelar", key=f"dir_cancelar_{i}"):
-                                st.info("Cancelado.")
-                        else:
-                            insert_media(nome, link, cliente_id, tipologia, segmento, tier)
-                            st.success("Guardado com sucesso!")
-                            st.rerun()
+                            else:
+                                dono = next((c[1] for c in clientes if c[0] == ex_url["cliente_id"]), "Outro cliente")
+                                st.warning(f"⚠️ Esta URL já está associada à empresa: {dono}. Não é possível reutilizar.")
+                                st.stop()
 
+                    if existente:
+                        # Guarda valores no session_state e força rerun para mostrar confirmação fora deste bloco
+                        st.session_state[f"{state_base}_pending_nome"] = nome
+                        st.session_state[f"{state_base}_pending_tipologia"] = tipologia
+                        st.session_state[f"{state_base}_pending_segmento"] = segmento
+                        st.session_state[f"{state_base}_pending_tier"] = tier
+                        st.session_state[f"{state_base}_pending_link"] = link
+                        st.session_state[f"{state_base}_pending_id"] = existente[0]
+
+                        # Também guardamos os valores atuais para comparar sem nova query
+                        st.session_state[f"{state_base}_existente_nome"] = existente[1]
+                        st.session_state[f"{state_base}_existente_url"] = existente[2]
+                        st.session_state[f"{state_base}_existente_tipologia"] = existente[3]
+                        st.session_state[f"{state_base}_existente_segmento"] = existente[4]
+                        st.session_state[f"{state_base}_existente_tier"] = existente[5]
+
+                        st.session_state[f"{state_base}_show_confirm"] = True
+                        st.rerun()
+                    else:
+                        # Não existe — inserir diretamente
+                        insert_media(nome, link, cliente_id, tipologia, segmento, tier)
+                        st.success("Guardado com sucesso!")
+                        st.rerun()
+
+                # Bloco de confirmação, fora do if "Guardar" (apresentado após o rerun)
+                if st.session_state.get(f"{state_base}_show_confirm", False):
+                    pend_id = st.session_state.get(f"{state_base}_pending_id")
+                    pend_nome = st.session_state.get(f"{state_base}_pending_nome")
+                    pend_url = st.session_state.get(f"{state_base}_pending_link")
+                    pend_tipologia = st.session_state.get(f"{state_base}_pending_tipologia")
+                    pend_segmento = st.session_state.get(f"{state_base}_pending_segmento")
+                    pend_tier = st.session_state.get(f"{state_base}_pending_tier")
+
+                    exist_nome = st.session_state.get(f"{state_base}_existente_nome")
+                    exist_url = st.session_state.get(f"{state_base}_existente_url")
+                    exist_tipologia = st.session_state.get(f"{state_base}_existente_tipologia")
+                    exist_segmento = st.session_state.get(f"{state_base}_existente_segmento")
+                    exist_tier = st.session_state.get(f"{state_base}_existente_tier")
+
+                    def clear_pending(prefix: str):
+                        for suf in [
+                            "pending_nome", "pending_link", "pending_tipologia",
+                            "pending_segmento", "pending_tier", "pending_id",
+                            "existente_nome", "existente_url", "existente_tipologia",
+                            "existente_segmento", "existente_tier", "show_confirm"
+                        ]:
+                            st.session_state.pop(f"{prefix}_{suf}", None)
+
+                    st.warning("⚠️ Já existe uma media com este nome/URL para esta empresa.")
+                    col1, col2 = st.columns(2)
+
+                    with col1:
+                        st.markdown("#### 📄 Media Existente")
+                        st.write(f"**Nome:** {exist_nome}")
+                        st.write(f"**URL:** {exist_url}")
+                        st.write(f"**Tipologia:** {exist_tipologia}")
+                        st.write(f"**Segmento:** {exist_segmento}")
+                        st.write(f"**Tier:** {exist_tier}")
+
+                    with col2:
+                        st.markdown("#### ✍️ Nova Media")
+                        st.write(f"**Nome:** {pend_nome}")
+                        st.write(f"**URL:** {pend_url}")
+                        st.write(f"**Tipologia:** {pend_tipologia}")
+                        st.write(f"**Segmento:** {pend_segmento}")
+                        st.write(f"**Tier:** {pend_tier}")
+
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        if st.button("✅ Confirmar e Substituir", key=f"dir_confirma_{i}"):
+                            update_media(
+                                media_id=pend_id,
+                                nome=pend_nome,
+                                url=pend_url,
+                                tipologia=pend_tipologia,
+                                segmento=pend_segmento,
+                                tier=pend_tier
+                            )
+                            st.success("Media atualizada com sucesso!")
+                            clear_pending(state_base)
+                            st.rerun()
+                    with c2:
+                        if st.button("❌ Cancelar", key=f"dir_cancelar_{i}"):
+                            st.info("Operação cancelada.")
+                            clear_pending(state_base)
+                            st.rerun()
 
 
 
