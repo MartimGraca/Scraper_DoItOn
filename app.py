@@ -24,7 +24,7 @@ multiprocessing.set_start_method("spawn", force=True)
 import asyncio
 import sys
 from st_aggrid import AgGrid
-from auth import get_user, check_password, register_user, log_action, login_tentativas_check, login_falhou, get_role_name
+from auth import get_user, check_password, register_user, log_action, login_tentativas_check, login_falhou, get_role_name, is_admin_email
 import os
 
 load_dotenv()
