@@ -2,7 +2,9 @@ import asyncio
 import gc
 import logging
 import os
-import subprocess
+import sys
+import traceback
+from typing import Optional, Tuple
 from urllib.parse import urlparse, urljoin, urldefrag
 
 from dotenv import load_dotenv
@@ -11,24 +13,30 @@ from playwright.async_api import async_playwright
 
 load_dotenv()
 
-# Limites e opções de performance/memória
-MAX_CANDIDATES = int(os.getenv("MAX_CANDIDATES", "40"))       # limite de links recolhidos na página de resultados
-MAX_TOP_LINKS = int(os.getenv("MAX_TOP_LINKS", "6"))          # máximo de artigos a abrir por keyword
-NAV_TIMEOUT = int(os.getenv("NAV_TIMEOUT_MS", "15000"))       # timeout de navegação
-ACT_TIMEOUT = int(os.getenv("ACTION_TIMEOUT_MS", "8000"))     # timeout de ações (click/fill/etc)
+# ========= CONFIG =========
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+MAX_CANDIDATES = int(os.getenv("MAX_CANDIDATES", "60"))       # limite de links recolhidos na página de resultados
+MAX_TOP_LINKS = int(os.getenv("MAX_TOP_LINKS", "8"))          # máximo de artigos a abrir por keyword
+NAV_TIMEOUT = int(os.getenv("NAV_TIMEOUT_MS", "20000"))       # timeout de navegação
+ACT_TIMEOUT = int(os.getenv("ACTION_TIMEOUT_MS", "9000"))     # timeout de ações (click/fill/etc)
 BLOCK_IMAGES = os.getenv("BLOCK_IMAGES", "1") == "1"
 BLOCK_MEDIA = os.getenv("BLOCK_MEDIA", "1") == "1"
 BLOCK_FONTS = os.getenv("BLOCK_FONTS", "1") == "1"
-BLOCK_ADS = os.getenv("BLOCK_ADS", "1") == "1"                # bloquear domínios comuns de ads/trackers
-USE_MOBILE = os.getenv("USE_MOBILE", "1") == "1"              # usar viewport/UA mobile para páginas mais leves
+BLOCK_ADS = os.getenv("BLOCK_ADS", "1") == "1"
+USE_MOBILE = os.getenv("USE_MOBILE", "1") == "1"
+ALLOW_NO_MATCH = os.getenv("ALLOW_NO_MATCH", "1") == "1"      # devolve resultados mesmo sem match exato no conteúdo
+SHOW_LINK_REASONS = os.getenv("SHOW_LINK_REASONS", "0") == "1"  # logs dos motivos de exclusão de links
 
-# Logging básico
+# ========= LOGGING =========
 logging.basicConfig(
-    filename="scraper_log.txt",
-    filemode="w",
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
     format="%(asctime)s - %(levelname)s - %(message)s",
-    level=logging.INFO
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler("scraper_log.txt", mode="w")
+    ]
 )
+logger = logging.getLogger("scraper")
 
 LOGIN_EMAIL = os.getenv("LOGIN_EMAIL", "")
 LOGIN_PASSWORD = os.getenv("LOGIN_PASSWORD", "")
@@ -49,6 +57,13 @@ NEWS_PATH_HINTS = [
 ]
 EXCLUDED_SUBDOMAINS = ["ajuda", "help", "support", "login", "auth", "conta", "store", "shop", "blog"]
 
+AD_HOST_HINTS = [
+    "doubleclick.net", "googlesyndication.com", "googletagmanager.com", "google-analytics.com",
+    "facebook.net", "twitter.com/i", "scorecardresearch.com", "criteo.com", "taboola.com",
+    "outbrain.com", "cloudfront.net", "adservice.google.com", "hotjar.com"
+]
+
+
 def get_site_name(url):
     parsed_url = urlparse(url)
     domain = parsed_url.netloc
@@ -61,11 +76,13 @@ def get_site_name(url):
         site_name = filtered_parts[0].capitalize()
     return site_name
 
+
 def get_base_domain(host: str) -> str:
     parts = host.split(".")
     return ".".join(parts[-2:]) if len(parts) >= 2 else host
 
-def normalize_url(base_url: str, href: str) -> str | None:
+
+def normalize_url(base_url: str, href: Optional[str]) -> Optional[str]:
     if not href:
         return None
     href = href.strip()
@@ -77,6 +94,7 @@ def normalize_url(base_url: str, href: str) -> str | None:
         return None
     return full
 
+
 def host_allowed(candidate_host: str, base_host: str) -> bool:
     base_root = get_base_domain(base_host)
     if candidate_host == base_host or candidate_host.endswith("." + base_root):
@@ -87,26 +105,30 @@ def host_allowed(candidate_host: str, base_host: str) -> bool:
         return True
     return False
 
-def is_relevant_link(base_host: str, url: str, text: str) -> bool:
+
+def link_filter_reason(base_host: str, url: str, text: str) -> Tuple[bool, str]:
     u = url.lower()
     t = (text or "").lower().strip()
 
     if any(b in u for b in BLOCKED_URL_HINTS):
-        return False
+        return False, "blocked_by_url_hint"
     if any(b in t for b in BLOCKED_URL_HINTS):
-        return False
+        return False, "blocked_by_text_hint"
 
-    if len(t) < 15:
-        return False
+    if len(t) < 12:
+        return False, "text_too_short"
 
     cand_host = urlparse(url).netloc
     if not host_allowed(cand_host, base_host):
-        return False
+        return False, "other_domain"
 
+    # Se tiver pista de notícia, ótimo
     if any(h in u for h in NEWS_PATH_HINTS) or any(h in t for h in NEWS_PATH_HINTS):
-        return True
+        return True, "news_hint"
 
-    return True
+    # Caso não tenha pistas, ainda aceitamos
+    return True, "generic_ok"
+
 
 async def clicar_carregar_mais(page, max_clicks: int = 2):
     textos = ["Mais notícias", "Ver mais", "Mostrar mais", "Carregar mais", "Mais artigos"]
@@ -125,11 +147,14 @@ async def clicar_carregar_mais(page, max_clicks: int = 2):
                     await page.wait_for_timeout(800)
                     clicks += 1
                     clicked = True
+                    logger.info(f"Clique em botão de expandir: {tx}")
                     break
             except Exception:
                 continue
         if not clicked:
             break
+    logger.info(f"Expandir listas concluído. Cliques: {clicks}")
+
 
 async def aceitar_cookies(page):
     await page.wait_for_timeout(800)
@@ -162,10 +187,11 @@ async def aceitar_cookies(page):
                         await page.evaluate("(el) => el.click()", btn)
                     except Exception:
                         continue
+                logger.info(f"Cookies aceites via seletor: {selector}")
                 return
         except Exception:
             continue
-    # iframes (rápido)
+    # iframes
     try:
         for frame in page.frames:
             for selector in cookie_selectors:
@@ -173,13 +199,17 @@ async def aceitar_cookies(page):
                     btn = await frame.query_selector(selector)
                     if btn:
                         await btn.click(timeout=800)
+                        logger.info(f"Cookies aceites num iframe: {selector}")
                         return
                 except Exception:
                     continue
     except Exception:
         pass
+    logger.info("Nenhum popup de cookies encontrado/necessário.")
+
 
 async def encontrar_e_preencher_pesquisa(page, keyword):
+    logger.info("A procurar campo de pesquisa...")
     input_seletor = (
         'input[type="search"], input[type="text"], '
         'input[placeholder*="pesquisar" i], input[placeholder*="search" i], '
@@ -190,9 +220,13 @@ async def encontrar_e_preencher_pesquisa(page, keyword):
     async def tentar_preencher_campo():
         try:
             input_elements = await page.query_selector_all(input_seletor)
-            for input_el in input_elements:
-                box = await input_el.bounding_box()
-                if box and box['height'] > 10 and box['width'] > 100:
+            logger.info(f"Campos de input candidatos: {len(input_elements)}")
+            for idx, input_el in enumerate(input_elements):
+                try:
+                    box = await input_el.bounding_box()
+                except Exception:
+                    box = None
+                if box and box.get('height', 0) > 10 and box.get('width', 0) > 100:
                     try:
                         await input_el.scroll_into_view_if_needed()
                         await input_el.click(timeout=500)
@@ -202,18 +236,22 @@ async def encontrar_e_preencher_pesquisa(page, keyword):
                     try:
                         await input_el.fill(keyword, timeout=800)
                         await page.keyboard.press("Enter")
+                        logger.info(f"Pesquisa submetida via input índice {idx}")
                         return True
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"Falha a preencher input índice {idx}: {e}")
                         continue
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Erro ao procurar campo: {e}")
             return False
         return False
 
     if await tentar_preencher_campo():
         return True
 
-    # Tentar abrir pesquisa por ícone
+    # Ícones/botões
     botoes = await page.query_selector_all('button, a')
+    logger.info(f"Botões/links para tentar abrir pesquisa: {len(botoes)}")
     for botao in botoes:
         try:
             html = (await botao.inner_html()).lower()
@@ -232,9 +270,9 @@ async def encontrar_e_preencher_pesquisa(page, keyword):
     if await tentar_preencher_campo():
         return True
 
-    # fallback JS curto
+    # Fallback JS
     try:
-        await page.evaluate(f'''
+        ok = await page.evaluate(f'''
             () => {{
                 const kw = {keyword!r};
                 for (const input of document.querySelectorAll('input')) {{
@@ -253,28 +291,35 @@ async def encontrar_e_preencher_pesquisa(page, keyword):
             }}
         ''')
         await page.wait_for_timeout(600)
-        return True
-    except Exception:
+        logger.info(f"Pesquisa via JS fallback: {ok}")
+        return bool(ok)
+    except Exception as e:
+        logger.warning(f"Fallback JS falhou: {e}")
         return False
 
-async def heuristica_seletor(page):
+
+async def heuristica_seletor(page) -> Optional[str]:
     seletores = [
         'article',
         'div[class*="content"]',
         'div[class*="article"]',
         'div[id*="content"]',
-        'section[class*="content"]'
+        'section[class*="content"]',
+        'main'
     ]
     for sel in seletores:
         try:
             elementos = await page.query_selector_all(sel)
             if elementos and len(elementos) > 0:
+                logger.info(f"Seletor heurístico escolhido: {sel}")
                 return sel
-        except:
+        except Exception:
             continue
+    logger.info("Nenhum seletor heurístico encontrado; usar 'body'")
     return None
 
-async def extrair_titulo(page):
+
+async def extrair_titulo(page) -> Optional[str]:
     seletores_titulo = [
         "h1",
         "header h1",
@@ -295,34 +340,27 @@ async def extrair_titulo(page):
                     titulo = await el.inner_text()
                 if titulo and len(titulo.strip()) > 5:
                     return titulo.strip()
-        except:
+        except Exception:
             continue
     return None
+
 
 def ensure_playwright_browsers_installed():
     os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "0")
     try:
+        import subprocess
         subprocess.run(
             ["python", "-m", "playwright", "install", "--dry-run"],
             check=True,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-    except subprocess.CalledProcessError:
+    except Exception:
         try:
-            subprocess.run(["python", "-m", "playwright", "install", "chromium"], check=True)
+            subprocess.run(["python", "-m", "playwright", "install", "chromium", "--with-deps"], check=True)
         except Exception:
-            try:
-                subprocess.run(["python", "-m", "playwright", "install", "chromium", "--with-deps"], check=True)
-            except Exception:
-                pass
+            pass
 
-# NOVO: bloqueio de recursos pesados e domínios de ads/trackers
-AD_HOST_HINTS = [
-    "doubleclick.net", "googlesyndication.com", "googletagmanager.com", "google-analytics.com",
-    "facebook.net", "twitter.com/i", "scorecardresearch.com", "criteo.com", "taboola.com",
-    "outbrain.com", "cloudfront.net", "adservice.google.com", "hotjar.com"
-]
 
 async def route_intercept(route, request):
     url = request.url
@@ -336,7 +374,6 @@ async def route_intercept(route, request):
             return await route.abort()
         if BLOCK_FONTS and rtype in {"font"}:
             return await route.abort()
-        # stylesheets geralmente são necessários para layout/cookies; mantemos
         return await route.continue_()
     except Exception:
         try:
@@ -344,8 +381,8 @@ async def route_intercept(route, request):
         except Exception:
             pass
 
-# NOVO: verificar keyword no DOM sem puxar texto para Python
-async def keyword_in_content(page, seletor, keyword: str) -> bool:
+
+async def keyword_in_content(page, seletor: str, keyword: str) -> bool:
     js = """
     (sel, kw) => {
       const el = document.querySelector(sel);
@@ -359,7 +396,22 @@ async def keyword_in_content(page, seletor, keyword: str) -> bool:
     except Exception:
         return False
 
+
+async def keyword_in_body(page, keyword: str) -> bool:
+    js = """
+    (kw) => {
+      const text = (document.body && document.body.innerText) ? document.body.innerText : "";
+      return text.toLowerCase().includes(kw.toLowerCase());
+    }
+    """
+    try:
+        return bool(await page.evaluate(js, keyword))
+    except Exception:
+        return False
+
+
 async def bot_scraper(site_url, keyword, max_results):
+    logger.info(f"[START] bot_scraper site={site_url} kw='{keyword}' max={max_results}")
     resultados = []
     visited_urls = set()
     base_host = urlparse(site_url).netloc
@@ -372,7 +424,7 @@ async def bot_scraper(site_url, keyword, max_results):
                 args=[
                     "--no-sandbox",
                     "--disable-setuid-sandbox",
-                    "--disable-dev-shm-usage",            # importante em ambientes com pouca memória/SHM
+                    "--disable-dev-shm-usage",
                     "--disable-extensions",
                     "--disable-gpu",
                     "--disable-background-networking",
@@ -381,18 +433,12 @@ async def bot_scraper(site_url, keyword, max_results):
                     "--no-default-browser-check",
                     "--no-first-run",
                     "--disable-features=Translate",
-                    "--blink-settings=imagesEnabled=false" # reforço para imagens
+                    "--blink-settings=imagesEnabled=false"
                 ]
             )
         except PlaywrightError as e:
-            if "Executable doesn't exist" in str(e):
-                ensure_playwright_browsers_installed()
-                browser = await p.chromium.launch(
-                    headless=True,
-                    args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
-                )
-            else:
-                raise
+            logger.error(f"Falha a lançar o Chromium: {e}")
+            raise
 
         context_kwargs = dict(
             java_script_enabled=True,
@@ -413,30 +459,47 @@ async def bot_scraper(site_url, keyword, max_results):
         context.set_default_timeout(ACT_TIMEOUT)
 
         page = await context.new_page()
-        await page.route("**/*", route_intercept)  # NOVO: bloquear recursos pesados
+        await page.route("**/*", route_intercept)
 
         try:
             await page.goto(site_url, wait_until='domcontentloaded')
-        except Exception:
+            logger.info(f"Navegou para site base: {site_url}")
+        except Exception as e:
+            logger.exception(f"Erro ao abrir site base: {e}")
+            await context.close()
             await browser.close()
             return site_url, []
 
         await aceitar_cookies(page)
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(0.3)
 
         sucesso = await encontrar_e_preencher_pesquisa(page, keyword)
         if not sucesso:
+            logger.warning("Não conseguiu submeter a pesquisa. Abort.")
+            await context.close()
             await browser.close()
             return site_url, []
 
         try:
-            await page.wait_for_load_state('networkidle', timeout=8000)
-        except:
-            pass
+            await page.wait_for_load_state('networkidle', timeout=9000)
+        except Exception:
+            logger.info("Timeout em networkidle (seguimos em frente).")
 
         await clicar_carregar_mais(page, max_clicks=2)
 
         anchors = await page.query_selector_all('a')
+        total_anchors = len(anchors)
+        logger.info(f"Âncoras encontradas na página de resultados: {total_anchors}")
+
+        reason_counts = {
+            "blocked_by_url_hint": 0,
+            "blocked_by_text_hint": 0,
+            "text_too_short": 0,
+            "other_domain": 0,
+            "news_hint": 0,
+            "generic_ok": 0
+        }
+
         candidates = []
         for a in anchors:
             if len(candidates) >= MAX_CANDIDATES:
@@ -447,61 +510,104 @@ async def bot_scraper(site_url, keyword, max_results):
                 if not full_url:
                     continue
                 text = (await a.inner_text()) or ""
-                box = await a.bounding_box()
-                if box and box.get("y", 1000) > 150 and is_relevant_link(base_host, full_url, text):
+                # Usa bounding_box só para afastar header fixo
+                try:
+                    box = await a.bounding_box()
+                    if box and box.get("y", 1000) <= 120:
+                        continue
+                except Exception:
+                    pass
+
+                ok, reason = link_filter_reason(base_host, full_url, text)
+                if ok:
                     if full_url not in visited_urls:
                         candidates.append((full_url, text.strip()))
                         visited_urls.add(full_url)
+                reason_counts[reason] = reason_counts.get(reason, 0) + 1
             except Exception:
                 continue
+
+        logger.info(f"Candidatos recolhidos: {len(candidates)} (limite {MAX_CANDIDATES})")
+        if SHOW_LINK_REASONS:
+            logger.info(f"Motivos de filtragem: {reason_counts}")
 
         # ordenar por tamanho do texto (mais contexto) e limitar
         candidates.sort(key=lambda x: -len(x[1]))
         top_links = candidates[:MAX_TOP_LINKS]
+        logger.info(f"Top links a visitar: {len(top_links)}")
 
-        for url, _text in top_links:
+        visited_count = 0
+        matches_count = 0
+
+        for url, cand_text in top_links:
             if len(resultados) >= max_results:
                 break
             try:
                 await page.goto(url, wait_until='domcontentloaded', timeout=NAV_TIMEOUT)
                 await aceitar_cookies(page)
-                await asyncio.sleep(0.3)
-
+                await asyncio.sleep(0.2)
                 current_url = page.url
                 site_name = get_site_name(current_url)
 
                 seletor_corpo = await heuristica_seletor(page)
                 corpo_sel = seletor_corpo or "article"
+                # se não existir article, caímos para body
+                if seletor_corpo is None:
+                    corpo_sel = "body"
 
-                # Checagem barata no browser, sem puxar texto para Python
-                has_kw = await keyword_in_content(page, corpo_sel, keyword)
+                has_kw_sel = await keyword_in_content(page, corpo_sel, keyword)
+                has_kw_body = False if has_kw_sel else await keyword_in_body(page, keyword)
+                has_kw = has_kw_sel or has_kw_body
 
-                if has_kw:
-                    titulo = await extrair_titulo(page)
+                titulo = await extrair_titulo(page)
+
+                logger.info(
+                    f"[VISIT] {current_url} | sel={corpo_sel} | match_sel={has_kw_sel} | "
+                    f"match_body={has_kw_body} | title={'OK' if titulo else 'N/A'}"
+                )
+
+                if has_kw or ALLOW_NO_MATCH:
                     resultados.append((titulo or "", current_url, site_name))
-                # Retorna à lista de resultados com o mesmo tab (sem abrir novas páginas)
-                await page.go_back(timeout=8000)
-                await asyncio.sleep(0.2)
-            except Exception:
-                continue
+                    matches_count += 1 if has_kw else 0
 
-        # fechar e limpar
+                visited_count += 1
+
+                # voltar à lista
+                try:
+                    await page.go_back(timeout=8000)
+                except Exception:
+                    # Se falhar voltar, tentamos abrir de novo a página de resultados
+                    try:
+                        await page.goto(site_url, wait_until='domcontentloaded', timeout=NAV_TIMEOUT)
+                    except Exception:
+                        pass
+                await asyncio.sleep(0.1)
+
+            except Exception as e:
+                logger.warning(f"Falha a abrir link: {url} | {e}")
+
+        logger.info(f"[DONE] visitados={visited_count} | resultados={len(resultados)} | matches_exatos={matches_count}")
+
         await context.close()
         await browser.close()
         gc.collect()
 
     return site_url, resultados
 
-# Processar keywords em série (memória estável). Se quiser concorrência, use um Semaphore baixo (ex.: 2)
+
 async def executar_scraper(site_url, keyword, max_results):
-    _, resultados = await bot_scraper(site_url, keyword, max_results)
-    return resultados
+    try:
+        _, resultados = await bot_scraper(site_url, keyword, max_results)
+        return resultados
+    except Exception as e:
+        logger.exception(f"executar_scraper falhou: {e}")
+        return []
+
 
 async def rodar_varias_keywords(site_url, keywords, max_results=3):
     resultados_por_keyword = []
     for kw in keywords:
         res = await executar_scraper(site_url, kw, max_results)
         resultados_por_keyword.append((kw, res))
-        # pequena pausa para deixar o GC trabalhar
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.05)  # pequeno respiro para GC
     return resultados_por_keyword
