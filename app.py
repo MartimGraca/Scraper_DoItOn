@@ -157,6 +157,26 @@ def update_media(media_id, nome, url, tipologia, segmento, tier):
         (nome, url, tipologia, segmento, tier, media_id)
     )
     conn.commit()
+    
+def update_user_role(user_id, new_role_id):
+    # Garantia de segurança: não permitir alterar admins definidos no .env
+    cursor.execute("SELECT email FROM users WHERE id = %s", (user_id,))
+    row = cursor.fetchone()
+    if not row:
+        raise ValueError("Utilizador não encontrado.")
+
+    email = row[0]
+    if is_admin_email(email):
+        # Opcional: registar tentativa
+        log_action(
+            st.session_state.user["email"] if "user" in st.session_state else "",
+            "tentativa alteração função bloqueada",
+            f"utilizador ID: {user_id}"
+        )
+        raise PermissionError("Não é permitido alterar a role de emails admin definidos no .env.")
+
+    cursor.execute("UPDATE users SET role_id = %s WHERE id = %s", (new_role_id, user_id))
+    conn.commit()
 
 def extrair_nome_midia(site_name, titulo):
     if "|" in titulo:
@@ -799,6 +819,11 @@ elif menu == "Admin DB" and st.session_state.user["is_admin"]:
 
 # ----------- Página Gestão Utilizadores -----------
 
+# ... topo do ficheiro
+from auth import get_user, check_password, register_user, log_action, login_tentativas_check, login_falhou, get_role_name, is_admin_email
+# ... restante código
+
+# ----------- Página Gestão Utilizadores -----------
 if menu == "Gestão Utilizadores" and st.session_state.user["role_name"] == "admin":
     st.title("Gestão de Utilizadores")
     users = get_all_users()
@@ -810,14 +835,27 @@ if menu == "Gestão Utilizadores" and st.session_state.user["role_name"] == "adm
         col1, col2 = st.columns([3, 2])
         with col1:
             st.text(f"{uname} ({uemail})")
-        with col2:
-            new_role = st.selectbox("", options=role_dict.keys(), index=list(role_dict).index(urole), key=f"role_{uid}")
-            if st.button("Atualizar", key=f"update_{uid}"):
-                update_user_role(uid, role_dict[new_role])
-                st.success("Função atualizada!")
-                log_action(st.session_state.user["email"], "alteração função", f"utilizador ID: {uid}")
-                st.rerun()
 
+        is_env_admin = is_admin_email(uemail)
+
+        with col2:
+            # Desativar select para admins definidos no .env
+            new_role = st.selectbox(
+                "",
+                options=list(role_dict.keys()),
+                index=list(role_dict).index(urole),
+                key=f"role_{uid}",
+                disabled=is_env_admin
+            )
+
+            if is_env_admin:
+                st.caption("Este utilizador é admin fixo via .env e não pode ser alterado.")
+            else:
+                if st.button("Atualizar", key=f"update_{uid}"):
+                    update_user_role(uid, role_dict[new_role])
+                    st.success("Função atualizada!")
+                    log_action(st.session_state.user["email"], "alteração função", f"utilizador ID: {uid}")
+                    st.rerun()
 
 
 
