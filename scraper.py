@@ -1,10 +1,11 @@
 import asyncio
 from playwright.async_api import async_playwright
 import logging
-from urllib.parse import urlparse
 from urllib.parse import urlparse, urljoin
 import os
+import subprocess  # CHANGED: para instalar browsers em runtime
 from dotenv import load_dotenv
+from playwright._impl._errors import Error as PlaywrightError  # CHANGED: para tratar erro de executável inexistente
 
 load_dotenv()
 
@@ -16,19 +17,18 @@ logging.basicConfig(
     filename="scraper_log.txt",
     filemode="w",
     format="%(asctime)s - %(levelname)s - %(message)s",
-       level=logging.INFO
+    level=logging.INFO
 )
 
-
-from urllib.parse import urlparse
+# Credenciais opcionais para login automático (se existir)
+LOGIN_EMAIL = os.getenv("LOGIN_EMAIL", "")   # CHANGED: obtém do ambiente
+LOGIN_PASSWORD = os.getenv("LOGIN_PASSWORD", "")  # CHANGED: obtém do ambiente
 
 
 def get_site_name(url):
-
     parsed_url = urlparse(url)
     domain = parsed_url.netloc
     parts = domain.split('.')
-
 
     subdominios_ignorados = ['www', 'news']
     filtered_parts = [part for part in parts if part not in subdominios_ignorados]
@@ -42,16 +42,20 @@ def get_site_name(url):
     return site_name
 
 
-
-
-
 async def clicar_botao_todos(page):
     try:
         elementos = await page.query_selector_all('button, a')
         for el in elementos:
-            texto = (await el.inner_text()).lower()
+            try:
+                texto = (await el.inner_text()).lower()
+            except Exception:
+                continue
             if "todos" in texto:
                 print(f"[INFO] Clicando no botão com 'todos': '{texto.strip()}'")
+                try:
+                    await el.scroll_into_view_if_needed()
+                except Exception:
+                    pass
                 await el.click()
                 await page.wait_for_timeout(3000)
                 return True
@@ -64,7 +68,6 @@ async def clicar_botao_todos(page):
 async def aceitar_cookies(page):
     print("[INFO] Verificando popup de cookies...")
     await page.wait_for_timeout(2000)
-
 
     cookie_selectors = [
         'button[aria-label*="aceitar" i]',
@@ -85,7 +88,6 @@ async def aceitar_cookies(page):
         'button[mode="primary"]',
     ]
 
-
     for selector in cookie_selectors:
         try:
             btn = await page.query_selector(selector)
@@ -96,7 +98,7 @@ async def aceitar_cookies(page):
                     print(f"[INFO] Cookies aceites via seletor: {selector}")
                     await page.wait_for_timeout(800)
                     return
-                except Exception as e:
+                except Exception:
                     # Alternativa via JavaScript caso .click() normal falhe
                     try:
                         await page.evaluate("(el) => el.click()", btn)
@@ -125,7 +127,6 @@ async def aceitar_cookies(page):
             continue
 
     print("[INFO] Nenhum popup de cookies encontrado ou necessário.")
-
 
 
 async def ollama_classify_links(links_texts, keyword):
@@ -168,9 +169,6 @@ async def ollama_classify_links(links_texts, keyword):
 
     # Retornar até 10 links mais promissores
     return [(url, text) for _, url, text in resultados_relevantes[:10]]
-
-
-
 
 
 async def tentar_login(page):
@@ -325,12 +323,50 @@ async def extrair_texto_conteudo(page, seletor):
     return ""
 
 
+# CHANGED: adiciona instalador resiliente dos browsers do Playwright
+def ensure_playwright_browsers_installed():
+    # Armazena browsers dentro do projeto/container (evita /root/.cache em alguns ambientes)
+    os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "0")
+    try:
+        subprocess.run(
+            ["python", "-m", "playwright", "install", "--dry-run"],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except subprocess.CalledProcessError:
+        try:
+            subprocess.run(["python", "-m", "playwright", "install", "chromium"], check=True)
+        except Exception:
+            try:
+                subprocess.run(["python", "-m", "playwright", "install", "--with-deps", "chromium"], check=True)
+            except Exception:
+                # Se falhar, deixamos o erro ser apanhado ao lançar o browser
+                pass
+
+
 async def bot_scraper(site_url, keyword, max_results):
     resultados = []
     visited_urls = set()
 
+    ensure_playwright_browsers_installed()  # CHANGED: garante browsers antes de lançar
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False)
+        # CHANGED: headless + no-sandbox; retry se faltarem executáveis
+        try:
+            browser = await p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-setuid-sandbox"]
+            )
+        except PlaywrightError as e:
+            if "Executable doesn't exist" in str(e):
+                ensure_playwright_browsers_installed()
+                browser = await p.chromium.launch(
+                    headless=True,
+                    args=["--no-sandbox", "--disable-setuid-sandbox"]
+                )
+            else:
+                raise
+
         context = await browser.new_context()
         page = await context.new_page()
 
@@ -341,6 +377,7 @@ async def bot_scraper(site_url, keyword, max_results):
 
         sucesso = await encontrar_e_preencher_pesquisa(page, keyword)
         if not sucesso:
+            await browser.close()  # CHANGED: fecha o browser no early return
             return site_url, []
 
         try:
@@ -389,7 +426,8 @@ async def bot_scraper(site_url, keyword, max_results):
                 # Verificar se a palavra-chave está presente
                 if keyword.lower() in texto.lower():
                     titulo = await extrair_titulo(page)
-                    resultados.append((current_url, site_name, titulo))
+                    # CHANGED: ordem do tuple -> (titulo, link, site_name)
+                    resultados.append((titulo or "", current_url, site_name))
                     print(f"[MATCH] Palavra-chave encontrada. Título: {titulo}")
                 else:
                     print(f"[INFO] Palavra-chave não encontrada no conteúdo da notícia.")
@@ -402,8 +440,6 @@ async def bot_scraper(site_url, keyword, max_results):
         await browser.close()
 
     return site_url, resultados
-
-
 
 
 async def aceitar_consentimentos(page):
@@ -442,34 +478,35 @@ async def aceitar_consentimentos(page):
 
     print("[INFO] Nenhum botão de consentimento encontrado.")
 
+
 async def extrair_titulo(page):
-        seletores_titulo = [
-            "h1",
-            "header h1",
-            "article h1",
-            "section h1",
-            "div[class*='title'] h1",
-            "div[class*='header'] h1",
-            "h2",  # fallback
-            "meta[property='og:title']",
-            "title"
-        ]
+    seletores_titulo = [
+        "h1",
+        "header h1",
+        "article h1",
+        "section h1",
+        "div[class*='title'] h1",
+        "div[class*='header'] h1",
+        "h2",  # fallback
+        "meta[property='og:title']",
+        "title"
+    ]
 
-        for seletor in seletores_titulo:
-            try:
-                el = await page.query_selector(seletor)
-                if el:
-                    # Meta tag special case
-                    if seletor.startswith("meta"):
-                        titulo = await el.get_attribute("content")
-                    else:
-                        titulo = await el.inner_text()
-                    if titulo and len(titulo.strip()) > 5:
-                        return titulo.strip()
-            except:
-                continue
+    for seletor in seletores_titulo:
+        try:
+            el = await page.query_selector(seletor)
+            if el:
+                # Meta tag special case
+                if seletor.startswith("meta"):
+                    titulo = await el.get_attribute("content")
+                else:
+                    titulo = await el.inner_text()
+                if titulo and len(titulo.strip()) > 5:
+                    return titulo.strip()
+        except:
+            continue
 
-        return None
+    return None
 
 
 async def rodar_varias_keywords(site_url, keywords, max_results=3):
@@ -486,4 +523,3 @@ async def rodar_varias_keywords(site_url, keywords, max_results=3):
 async def executar_scraper(site_url, keyword, max_results):
     _, resultados = await bot_scraper(site_url, keyword, max_results)
     return resultados
-
