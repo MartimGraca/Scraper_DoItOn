@@ -524,7 +524,7 @@ if menu == "Scraper" and role_name in ["admin", "account"]:
                         st.success("Guardado com sucesso!")
                         st.rerun()
 
-                # Bloco de confirmação, fora do if "Guardar" (apresentado após o rerun)
+                
                 if st.session_state.get(f"{state_base}_show_confirm", False):
                     pend_id = st.session_state.get(f"{state_base}_pending_id")
                     pend_nome = st.session_state.get(f"{state_base}_pending_nome")
