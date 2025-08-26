@@ -640,15 +640,23 @@ if menu == "Scraper" and role_name in ["admin", "account"]:
                                 clear_pending(state_base)
                                 st.rerun()
 
-    # ---------- MINHA BASE DE MEDIA (REVISTO) ----------
+# ---------- MINHA BASE DE MEDIA (Robusto) ----------
 elif modo_scraper == "Minha Base de Media":
     st.subheader("🧭 Scraper da Minha Base de Media")
     st.caption("Pesquisa em TODOS os sites da tabela 'media'. Os registos serão guardados/atualizados para a Empresa selecionada acima.")
+    st.caption(f"(debug) modo_scraper = {modo_scraper!r}")  # podes remover depois
 
-    # Destino de gravação: usa o cliente já escolhido no topo (empresa selecionada)
+    # Import seguro do scraper interno
+    try:
+        from scrapers.mediaDB_scraper import scrape_sites
+    except Exception as e:
+        st.error(f"Não consegui importar scrapers/mediaDB_scraper.py: {e}")
+        st.info("Confirma: 1) o ficheiro chama-se exatamente mediaDB_scraper.py; 2) existe scrapers/__init__.py.")
+        st.stop()
+
+    # Destino de gravação = empresa selecionada no topo
     cliente_destino = cliente_id
 
-    # Palavra‑chave e defaults globais para os resultados
     kw_int = st.text_input("Palavra‑chave", key="mdb_kw")
 
     colA, colB, colC = st.columns(3)
@@ -667,7 +675,7 @@ elif modo_scraper == "Minha Base de Media":
     with colF:
         default_tier = st.selectbox("Default Tier", [1, 2, 3, 4], index=3, key="mdb_def_tier")  # 4 por omissão
 
-    # Ler TODOS os sites da tabela media (ignora empresa de origem)
+    # Lê TODOS os sites da tabela media
     def fetch_all_medias(limit_sites: int | None):
         try:
             cursor.execute("SELECT id, nome, url FROM media WHERE url IS NOT NULL AND url <> '' ORDER BY id DESC")
@@ -690,7 +698,7 @@ elif modo_scraper == "Minha Base de Media":
             st.session_state["mdb_resultados"] = resultados
             st.success(f"Encontrados {len(resultados)} resultados.")
 
-    # Render dos resultados com a mesma lógica de guardar/confirmar
+    # Render de resultados + Guardar / Confirmar e Substituir (mesmo padrão dos outros)
     for i, r in enumerate(st.session_state.get("mdb_resultados", [])):
         titulo = r.get("title") or "Sem título"
         link = r.get("url") or ""
@@ -701,7 +709,7 @@ elif modo_scraper == "Minha Base de Media":
             st.write(f"Media detectada: {site_name}  •  Fonte: {fonte}")
             st.markdown(f"[🌐 Abrir Link]({link})", unsafe_allow_html=True)
 
-            # Inputs por resultado (preenchidos com os defaults)
+            # Inputs por resultado (preenchidos com defaults)
             nome_sugerido = extrair_nome_midia(site_name, titulo)
             nome = st.text_input("📝 Nome da Media", nome_sugerido, key=f"mdb_nome_{i}")
             tipologia = st.selectbox("📺 Tipologia", ["Online", "TV", "Rádio", "Imprensa"], index=["Online","TV","Rádio","Imprensa"].index(default_tipologia), key=f"mdb_tipo_{i}")
@@ -731,7 +739,7 @@ elif modo_scraper == "Minha Base de Media":
                             st.stop()
 
                 if existente:
-                    # Guardar pendentes e dados existentes para confirmação após rerun
+                    # Guardar pendentes + existentes p/ confirmação
                     st.session_state[f"{state_base}_pending_nome"] = nome
                     st.session_state[f"{state_base}_pending_tipologia"] = tipologia
                     st.session_state[f"{state_base}_pending_segmento"] = segmento
@@ -748,12 +756,12 @@ elif modo_scraper == "Minha Base de Media":
                     st.session_state[f"{state_base}_show_confirm"] = True
                     st.rerun()
                 else:
-                    # Inserir diretamente na empresa destino
+                    # Inserção direta
                     insert_media(nome, link, cliente_destino, tipologia, segmento, tier)
                     st.success("Guardado com sucesso!")
                     st.rerun()
 
-            # Confirmação fora do bloco Guardar
+            # Confirmação fora do clique Guardar
             if st.session_state.get(f"{state_base}_show_confirm", False):
                 pend_id = st.session_state.get(f"{state_base}_pending_id")
                 pend_nome = st.session_state.get(f"{state_base}_pending_nome")
@@ -815,7 +823,6 @@ elif modo_scraper == "Minha Base de Media":
                         st.info("Operação cancelada.")
                         clear_pending(state_base)
                         st.rerun()
-
 
 # ----------- Página Dashboard (Placeholder) -----------
             elif menu == "Dashboard":
