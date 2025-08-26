@@ -1084,15 +1084,163 @@ elif menu == "Logs":
 
 
 
+
 # ----------- Lista de Mídia ----------
 elif menu == "Media" and role_name in ["admin", "account"]:
     st.markdown("<h2 style='color:#4A90E2;'>📺 Gestão e Visualização de Media</h2>", unsafe_allow_html=True)
 
+    # Seleção de Cliente
     clientes = get_clientes(None, role_name)
     clientes_dict = {c[1]: c[0] for c in clientes}
+    if not clientes_dict:
+        st.warning("⚠️ Não existem empresas. Cria primeiro um cliente.")
+        st.stop()
     cliente_selecionado_nome = st.selectbox("📁 Selecione a Empresa", list(clientes_dict.keys()))
     cliente_id = clientes_dict[cliente_selecionado_nome]
 
+    # Importar/Exportar via Excel
+    with st.expander("📥 Importar/Exportar via Excel", expanded=False):
+        col_dl, col_up = st.columns([1, 2])
+
+        with col_dl:
+            st.caption("Modelos de ficheiro para facilitar o preenchimento.")
+            # Template vazio
+            template_cols = ["Nome", "URL", "Tipologia", "Segmento", "Tier"]
+            template_df = pd.DataFrame(columns=template_cols)
+            buf_template = io.BytesIO()
+            with pd.ExcelWriter(buf_template, engine="xlsxwriter") as writer:
+                template_df.to_excel(writer, index=False, sheet_name="Medias")
+            st.download_button(
+                "⬇️ Descarregar Template Excel",
+                data=buf_template.getvalue(),
+                file_name=f"template_medias_{cliente_selecionado_nome}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+
+            # Export das medias atuais do cliente selecionado
+            query_export = """
+                SELECT media.nome AS Nome, media.url AS URL, media.tipologia AS Tipologia,
+                       media.segmento AS Segmento, media.tier AS Tier
+                FROM media
+                WHERE media.cliente_id = %s
+            """
+            try:
+                df_export = pd.read_sql_query(query_export, conn, params=[cliente_id])
+            except Exception:
+                df_export = pd.DataFrame(columns=template_cols)
+            buf_export = io.BytesIO()
+            with pd.ExcelWriter(buf_export, engine="xlsxwriter") as writer:
+                (df_export[template_cols] if not df_export.empty else template_df).to_excel(writer, index=False, sheet_name="Medias")
+            st.download_button(
+                "⬇️ Exportar Medias deste Cliente",
+                data=buf_export.getvalue(),
+                file_name=f"medias_{cliente_selecionado_nome}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+
+        with col_up:
+            st.caption("Carrega um .xlsx com colunas: Nome, URL, Tipologia, Segmento, Tier. O cliente será o selecionado acima.")
+            arquivo = st.file_uploader("Carregar Excel (.xlsx)", type=["xlsx"])
+            atualizar_existentes = st.checkbox("Atualizar registos existentes (mesma URL no mesmo cliente)", value=True)
+            btn_importar = st.button("📤 Importar para Media", use_container_width=True, disabled=arquivo is None)
+
+            if btn_importar and arquivo is not None:
+                try:
+                    df_in = pd.read_excel(arquivo)
+                except Exception as e:
+                    st.error(f"❌ Erro a ler Excel: {e}")
+                    st.stop()
+
+                # Normalizar nomes de colunas (case-insensitive)
+                expected = {"nome": "Nome", "url": "URL", "tipologia": "Tipologia", "segmento": "Segmento", "tier": "Tier"}
+                colmap = {}
+                for c in df_in.columns:
+                    key = str(c).strip().lower()
+                    if key in expected:
+                        colmap[c] = expected[key]
+                df_in = df_in.rename(columns=colmap)
+
+                missing = [v for v in expected.values() if v not in df_in.columns and v != "Nome"]  # 'Nome' podemos derivar
+                if "URL" not in df_in.columns:
+                    st.error("❌ A coluna 'URL' é obrigatória.")
+                    st.stop()
+                if missing:
+                    st.warning(f"⚠️ Colunas em falta (serão assumidos defaults se aplicável): {', '.join(missing)}")
+
+                # Funções auxiliares
+                def clamp_tier(x):
+                    try:
+                        v = int(x)
+                    except Exception:
+                        v = 4
+                    return min(4, max(1, v))
+
+                def norm_tipologia(x):
+                    allowed = ["Print", "Online", "TV", "Rádio"]
+                    s = str(x).strip() if pd.notna(x) else ""
+                    return s if s in allowed else "Online"
+
+                def norm_segmento(x):
+                    allowed = ["Tecnologia", "Político", "Saúde", "Outro"]
+                    s = str(x).strip() if pd.notna(x) else ""
+                    return s if s in allowed else "Outro"
+
+                def fallback_nome_por_url(u):
+                    try:
+                        from urllib.parse import urlparse
+                        host = urlparse(u).netloc or ""
+                        host = host.replace("www.", "")
+                        base = host.split(".")[0] if host else "Site"
+                        return base.capitalize()
+                    except Exception:
+                        return "Site"
+
+                # Importação
+                total = len(df_in)
+                inseridos = atualizados = ignorados = conflitos_outro_cliente = erros = 0
+                vistos = set()
+
+                for idx, row in df_in.iterrows():
+                    url = str(row.get("URL", "")).strip()
+                    if not url or url.lower() == "nan":
+                        ignorados += 1
+                        continue
+                    if url in vistos:
+                        ignorados += 1
+                        continue
+                    vistos.add(url)
+
+                    nome = str(row.get("Nome") or "").strip()
+                    if not nome:
+                        nome = fallback_nome_por_url(url)
+
+                    tipologia = norm_tipologia(row.get("Tipologia"))
+                    segmento = norm_segmento(row.get("Segmento"))
+                    tier = clamp_tier(row.get("Tier"))
+
+                    try:
+                        ex_url = media_por_url(url)
+                        if ex_url:
+                            if ex_url["cliente_id"] == cliente_id:
+                                if atualizar_existentes:
+                                    update_media(ex_url["id"], nome, url, tipologia, segmento, tier)
+                                    atualizados += 1
+                                else:
+                                    ignorados += 1
+                            else:
+                                conflitos_outro_cliente += 1
+                        else:
+                            insert_media(nome, url, cliente_id, tipologia, segmento, tier)
+                            inseridos += 1
+                    except Exception:
+                        erros += 1
+
+                st.success(f"✅ Importação concluída. Total linhas: {total} | Inseridos: {inseridos} | Atualizados: {atualizados} | Ignorados: {ignorados} | Conflitos outro cliente: {conflitos_outro_cliente} | Erros: {erros}")
+                st.rerun()
+
+    # Expander para adicionar 1 media manualmente
     with st.expander("➕ Adicionar Nova Media"):
         with st.form("form_adicionar_midia"):
             nome_midia = st.text_input("Nome da Mídia")
@@ -1103,11 +1251,11 @@ elif menu == "Media" and role_name in ["admin", "account"]:
             submit = st.form_submit_button("Salvar")
             if submit:
                 if nome_midia and url_midia and cliente_id:
-                 insert_media(nome_midia, url_midia, cliente_id, tipologia, segmento, tier)
-                 st.success("✅ Media adicionada com sucesso!")
-                 st.rerun()
-            else:
-                 st.error("❌ Preencha todos os campos obrigatórios.")
+                    insert_media(nome_midia, url_midia, cliente_id, tipologia, segmento, tier)
+                    st.success("✅ Media adicionada com sucesso!")
+                    st.rerun()
+                else:
+                    st.error("❌ Preencha todos os campos obrigatórios.")
 
     # Filtros
     st.markdown("<hr><h3 style='color:#4A90E2;'>🔍 Filtros de Pesquisa</h3>", unsafe_allow_html=True)
@@ -1246,51 +1394,3 @@ elif menu == "Media" and role_name in ["admin", "account"]:
         if cols[idx].button("⏭", disabled=(pag_atual == pag_total)):
             st.session_state["pagina"] = pag_total
             st.rerun()
-
-
-
-# ----------- SCRAPER OFFLINE AUTOMATICO ----------
-if menu == "Resultados Automáticos":
-    conn = sqlite3.connect("database.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, titulo, url, data, keyword, cliente_id, site FROM noticias_sugeridas ORDER BY data DESC")
-    resultados = cursor.fetchall()
-
-    st.title("📰 Resultados Automáticos")
-
-    for id_, titulo, url, data, keyword, cliente_id, site in resultados:
-        with st.expander(f"🔗 {titulo}"):
-            st.write(f"**URL:** [{url}]({url})")
-            st.write(f"📅 Data: {data}")
-            st.write(f"🔑 Palavra-chave: {keyword}")
-            st.write(f"🌐 Site: {site}")
-
-            col1, col2 = st.columns(2)
-
-            with col1:
-                if st.button(f"✅ Guardar como mídia", key=f"guardar_{id_}"):
-                    # Guardar na tabela mídia
-                    cursor.execute("""
-                        INSERT OR IGNORE INTO media (nome, url, cliente_id, tipologia, segmento, tier)
-                        VALUES (%s, %s, %s, %s, %s, %s)
-                    """, (titulo, url, cliente_id or 1, "Sugerida", keyword, 4))
-                    cursor.execute("DELETE FROM noticias_sugeridas WHERE id = %s", (id_,))
-                    conn.commit()
-                    st.success("Guardado com sucesso!")
-                    st.experimental_rerun()
-
-            with col2:
-                if st.button(f"❌ Ignorar", key=f"ignorar_{id_}"):
-                    cursor.execute("DELETE FROM noticias_sugeridas WHERE id = %s", (id_,))
-                    conn.commit()
-                    st.warning("Notícia ignorada.")
-                    st.rerun()
-
-    conn.close()
-
-def hash_password(password: str) -> str:
-    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-
-def check_password(password: str, hashed: str) -> bool:
-    return bcrypt.checkpw(password.encode(), hashed.encode())
-
