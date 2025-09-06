@@ -27,6 +27,10 @@ import sys
 from st_aggrid import AgGrid
 from auth import get_user, check_password, register_user, log_action, login_tentativas_check, login_falhou, get_role_name, is_admin_email
 import os
+from utils.wipe_users_on_startup import wipe_users_once
+
+wipe_users_once()
+
 
 load_dotenv()
 ADMIN_EMAIL = os.getenv("ADMIN_EMAIL")
